@@ -343,8 +343,6 @@ def display_pointcloud(points3D):
     ply_name = 'point cloud'
     mesh = bpy.data.meshes.new(name=ply_name)
     mesh.vertices.add(xyzs.shape[0])
-    print(min(xyzs[:, 2]), max(xyzs[:, 2]))
-
     mesh.vertices.foreach_set("co", [a for v in xyzs for a in v])
 
     # Create our new object here
@@ -433,43 +431,6 @@ class OT_Debug(Operator):
         return {'FINISHED'}
 
 
-class generate_cropping_planes(bpy.types.Operator):
-    "create plane"
-    bl_idname = "mesh.add_cropping_planes"
-    bl_label = "Generate Cropping Plane"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    x: bpy.props.IntProperty(
-        name="Location X",
-        default=0,
-    )
-    y: bpy.props.IntProperty(
-        name="Location Y",
-        default=0,
-    )
-    size: bpy.props.FloatProperty(
-        name="size",
-        default=1,
-    )
-
-    def execute(self, context):
-        scene = context.scene
-        mytool = scene.my_tool
-        cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
-        xyzs = np.stack([point.xyz for point in points3D.values()])
-
-        bpy.ops.mesh.primitive_plane_add(
-            size=self.size,
-            location=(self.x, self.y, min(xyzs[:, 2])),
-            scale=(1, 1, 1))
-
-        bpy.ops.mesh.primitive_plane_add(
-            size=self.size,
-            location=(self.x, self.y, max(xyzs[:, 2])),
-            scale=(1, 1, 1))
-        return {'FINISHED'}
-
-
 # ------------------------------------------------------------------------
 #    Panel
 # ------------------------------------------------------------------------
@@ -492,6 +453,42 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.separator()
 
 
+class generate_cropping_planes(bpy.types.Operator):
+    "create plane"
+    bl_idname = "mesh.add_cropping_planes"
+    bl_label = "Generate Cropping Plane"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    x: bpy.props.IntProperty(
+        name="Location X",
+        default=0,
+    )
+    y: bpy.props.IntProperty(
+        name="Location Y",
+        default=0,
+    )
+    size: bpy.props.FloatProperty(
+        name="size",
+        default=1,
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        mytool = scene.my_tool
+
+        cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
+        xyzs = np.stack([point.xyz for point in points3D.values()])
+
+        bpy.ops.mesh.primitive_plane_add(
+            size=self.size,
+            location=(self.x, self.y, min(xyzs[:, 2])),
+            scale=(1, 1, 1))
+
+        bpy.ops.mesh.primitive_plane_add(
+            size=self.size,
+            location=(self.x, self.y, max(xyzs[:, 2])),
+            scale=(1, 1, 1))
+        return {'FINISHED'}
 # ------------------------------------------------------------------------
 #    Registration
 # ------------------------------------------------------------------------
@@ -501,7 +498,7 @@ classes = (
     OT_LoadCOLMAP,
     OT_Debug,
     NeuralangeloCustomPanel,
-    generate_cropping_planes
+    generate_cropping_planes,
 )
 
 
