@@ -8,7 +8,6 @@ import numpy as np
 import struct
 import argparse
 
-
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
 Camera = collections.namedtuple(
@@ -99,8 +98,8 @@ def read_cameras_binary(path_to_model_file):
             width = camera_properties[2]
             height = camera_properties[3]
             num_params = CAMERA_MODEL_IDS[model_id].num_params
-            params = read_next_bytes(fid, num_bytes=8*num_params,
-                                     format_char_sequence="d"*num_params)
+            params = read_next_bytes(fid, num_bytes=8 * num_params,
+                                     format_char_sequence="d" * num_params)
             cameras[camera_id] = Camera(id=camera_id,
                                         model=model_name,
                                         width=width,
@@ -159,13 +158,13 @@ def read_images_binary(path_to_model_file):
             camera_id = binary_image_properties[8]
             image_name = ""
             current_char = read_next_bytes(fid, 1, "c")[0]
-            while current_char != b"\x00":   # look for the ASCII 0 entry
+            while current_char != b"\x00":  # look for the ASCII 0 entry
                 image_name += current_char.decode("utf-8")
                 current_char = read_next_bytes(fid, 1, "c")[0]
             num_points2D = read_next_bytes(fid, num_bytes=8,
                                            format_char_sequence="Q")[0]
-            x_y_id_s = read_next_bytes(fid, num_bytes=24*num_points2D,
-                                       format_char_sequence="ddq"*num_points2D)
+            x_y_id_s = read_next_bytes(fid, num_bytes=24 * num_points2D,
+                                       format_char_sequence="ddq" * num_points2D)
             xys = np.column_stack([tuple(map(float, x_y_id_s[0::3])),
                                    tuple(map(float, x_y_id_s[1::3]))])
             point3D_ids = np.array(tuple(map(int, x_y_id_s[2::3])))
@@ -174,7 +173,6 @@ def read_images_binary(path_to_model_file):
                 camera_id=camera_id, name=image_name,
                 xys=xys, point3D_ids=point3D_ids)
     return images
-
 
 
 def read_points3D_text(path):
@@ -223,8 +221,8 @@ def read_points3D_binary(path_to_model_file):
             track_length = read_next_bytes(
                 fid, num_bytes=8, format_char_sequence="Q")[0]
             track_elems = read_next_bytes(
-                fid, num_bytes=8*track_length,
-                format_char_sequence="ii"*track_length)
+                fid, num_bytes=8 * track_length,
+                format_char_sequence="ii" * track_length)
             image_ids = np.array(tuple(map(int, track_elems[0::2])))
             point2D_idxs = np.array(tuple(map(int, track_elems[1::2])))
             points3D[point3D_id] = Point3D(
@@ -234,11 +232,10 @@ def read_points3D_binary(path_to_model_file):
     return points3D
 
 
-
 def detect_model_format(path, ext):
-    if os.path.isfile(os.path.join(path, "cameras"  + ext)) and \
-       os.path.isfile(os.path.join(path, "images"   + ext)) and \
-       os.path.isfile(os.path.join(path, "points3D" + ext)):
+    if os.path.isfile(os.path.join(path, "cameras" + ext)) and \
+            os.path.isfile(os.path.join(path, "images" + ext)) and \
+            os.path.isfile(os.path.join(path, "points3D" + ext)):
         print("Detected model format: '" + ext + "'")
         return True
 
@@ -269,15 +266,15 @@ def read_model(path, ext=""):
 
 def qvec2rotmat(qvec):
     return np.array([
-        [1 - 2 * qvec[2]**2 - 2 * qvec[3]**2,
+        [1 - 2 * qvec[2] ** 2 - 2 * qvec[3] ** 2,
          2 * qvec[1] * qvec[2] - 2 * qvec[0] * qvec[3],
          2 * qvec[3] * qvec[1] + 2 * qvec[0] * qvec[2]],
         [2 * qvec[1] * qvec[2] + 2 * qvec[0] * qvec[3],
-         1 - 2 * qvec[1]**2 - 2 * qvec[3]**2,
+         1 - 2 * qvec[1] ** 2 - 2 * qvec[3] ** 2,
          2 * qvec[2] * qvec[3] - 2 * qvec[0] * qvec[1]],
         [2 * qvec[3] * qvec[1] - 2 * qvec[0] * qvec[2],
          2 * qvec[2] * qvec[3] + 2 * qvec[0] * qvec[1],
-         1 - 2 * qvec[1]**2 - 2 * qvec[2]**2]])
+         1 - 2 * qvec[1] ** 2 - 2 * qvec[2] ** 2]])
 
 
 def rotmat2qvec(R):
@@ -295,20 +292,20 @@ def rotmat2qvec(R):
 
 
 # ------------------------------------------------------------------------
-#    AddOn code: 
+#    AddOn code:
 #    useful tutorial: https://blender.stackexchange.com/questions/57306/how-to-create-a-custom-ui
 # ------------------------------------------------------------------------
 
 # bl_info
 bl_info = {
-        "name":"BlenderNeuralangelo",
-        "version":(1, 0),
-        "blender":(3, 3, 1),
-        "location":"PROPERTIES",
-        "warning":"", # used for warning icon and text in addons panel
-        "support":"COMMUNITY",
-        "category":"Render"
-    }
+    "name": "BlenderNeuralangelo",
+    "version": (1, 0),
+    "blender": (3, 3, 1),
+    "location": "PROPERTIES",
+    "warning": "",  # used for warning icon and text in addons panel
+    "support": "COMMUNITY",
+    "category": "Render"
+}
 
 import bpy
 from bpy.props import (StringProperty,
@@ -324,7 +321,7 @@ from bpy.types import (Panel,
                        Operator,
                        PropertyGroup,
                        )
-                       
+
 # global variable for easier access
 colmap_data = {}
 
@@ -336,18 +333,18 @@ colmap_data = {}
 def display_pointcloud(points3D):
     '''
     load and display point cloud
-    borrowed from https://github.com/TombstoneTumbleweedArt/import-ply-as-verts    
+    borrowed from https://github.com/TombstoneTumbleweedArt/import-ply-as-verts
     '''
-    
-    xyzs = np.stack([point.xyz for point in points3D.values()])
-    rgbs = np.stack([point.rgb for point in points3D.values()]) #/ 255.0
 
-    
+    xyzs = np.stack([point.xyz for point in points3D.values()])
+    rgbs = np.stack([point.rgb for point in points3D.values()])  # / 255.0
 
     # Copy the positions
-    ply_name='point cloud'
+    ply_name = 'point cloud'
     mesh = bpy.data.meshes.new(name=ply_name)
     mesh.vertices.add(xyzs.shape[0])
+    print(min(xyzs[:, 2]), max(xyzs[:, 2]))
+
     mesh.vertices.foreach_set("co", [a for v in xyzs for a in v])
 
     # Create our new object here
@@ -357,13 +354,15 @@ def display_pointcloud(points3D):
     bpy.context.collection.objects.link(obj)
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
-            
+
     mesh.update()
     mesh.validate()
-    
+
+
 def generate_cropping_planes():
     return
-    
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -373,12 +372,12 @@ class MyProperties(PropertyGroup):
     slider bar, path, and everything else ....
     '''
     colmap_path: StringProperty(
-            name = "Directory",
-            description="Choose a directory:",
-            default="",
-            maxlen=1024,
-            subtype='DIR_PATH'
-        )
+        name="Directory",
+        description="Choose a directory:",
+        default="",
+        maxlen=1024,
+        subtype='DIR_PATH'
+    )
 
 
 # ------------------------------------------------------------------------
@@ -388,40 +387,41 @@ class MyProperties(PropertyGroup):
 class OT_LoadCOLMAP(Operator):
     bl_label = "Load COLMAP Data"
     bl_idname = "my.load_colmap"
-        
+
     def execute(self, context):
         scene = context.scene
         mytool = scene.my_tool
 
-        print("loading data")        
-        cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path+'sparse/'), ext='.bin')
+        print("loading data")
+        cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
-        
+
         print("store colmap data")
         global colmap_data
         colmap_data['cameras'] = cameras
         colmap_data['images'] = images
         colmap_data['points3D'] = points3D
-        
+
         print("TODO: set cropping planes location")
         generate_cropping_planes()
-        
+
         print("TODO: set camera intrinsics")
-        
+
         print("TODO: set camera poses")
-        
+
         print("TODO: load images")
 
         return {'FINISHED'}
+
 
 class OT_Debug(Operator):
     '''
     for easier debugging experience
     '''
-    
+
     bl_label = "Debug"
     bl_idname = "my.debug"
-        
+
     def execute(self, context):
         scene = context.scene
         mytool = scene.my_tool
@@ -431,7 +431,45 @@ class OT_Debug(Operator):
         print(len(colmap_data['points3D'].keys()))
 
         return {'FINISHED'}
-    
+
+
+class generate_cropping_planes(bpy.types.Operator):
+    "create plane"
+    bl_idname = "mesh.add_cropping_planes"
+    bl_label = "Generate Cropping Plane"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    x: bpy.props.IntProperty(
+        name="Location X",
+        default=0,
+    )
+    y: bpy.props.IntProperty(
+        name="Location Y",
+        default=0,
+    )
+    size: bpy.props.FloatProperty(
+        name="size",
+        default=1,
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        mytool = scene.my_tool
+        cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
+        xyzs = np.stack([point.xyz for point in points3D.values()])
+
+        bpy.ops.mesh.primitive_plane_add(
+            size=self.size,
+            location=(self.x, self.y, min(xyzs[:, 2])),
+            scale=(1, 1, 1))
+
+        bpy.ops.mesh.primitive_plane_add(
+            size=self.size,
+            location=(self.x, self.y, max(xyzs[:, 2])),
+            scale=(1, 1, 1))
+        return {'FINISHED'}
+
+
 # ------------------------------------------------------------------------
 #    Panel
 # ------------------------------------------------------------------------
@@ -447,7 +485,7 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         scene = context.scene
         layout = self.layout
         mytool = scene.my_tool
-        
+
         layout.prop(mytool, "colmap_path")
         layout.operator("my.load_colmap")
         layout.operator("my.debug")
@@ -462,8 +500,10 @@ classes = (
     MyProperties,
     OT_LoadCOLMAP,
     OT_Debug,
-    NeuralangeloCustomPanel
+    NeuralangeloCustomPanel,
+    generate_cropping_planes
 )
+
 
 def register():
     from bpy.utils import register_class
@@ -471,6 +511,7 @@ def register():
         register_class(cls)
 
     bpy.types.Scene.my_tool = PointerProperty(type=MyProperties)
+
 
 def unregister():
     from bpy.utils import unregister_class
