@@ -384,7 +384,7 @@ def generate_cropping_planes():
              [0, 1, 2, 3],
              [4, 5, 6, 7]]
 
-    msh = bpy.data.meshes.new("mesh of cropping plane")
+    msh = bpy.data.meshes.new("cropping plane")
     msh.from_pydata(verts, [], faces)
     obj = bpy.data.objects.new("cropping plane", msh)
     bpy.context.scene.collection.objects.link(obj)
@@ -524,14 +524,19 @@ class OT_Debug(Operator):
 class Crop(Operator):
     '''
     crop points outside the bounding box
+
+    note: if you want to see the result of point cropping, please follow the steps:
+
+            1.click "crop points" button
+            2.enter the edit mode
+            3.hide the cropping plane
+
     '''
 
     bl_label = "crop points"
     bl_idname = "my.crop"
 
     def execute(self, context):
-        scene = context.scene
-        mytool = scene.my_tool
 
         plane_verts = bpy.data.objects['cropping plane'].data.vertices
         cloud_verts = bpy.data.objects['point cloud'].data.vertices
@@ -551,8 +556,7 @@ class Crop(Operator):
             else:
                 v.hide = True
 
-        print("crop finished unhide vertices number is:", num)
-        bpy.context.view_layer.update()
+        print("crop finished; left vertices number :", num)
         return {'FINISHED'}
 
 
@@ -565,8 +569,11 @@ class BoundSphere(Operator):
     bl_idname = "my.add_bound_sphere"
 
     def execute(self, context):
-        scene = context.scene
-        mytool = scene.my_tool
+
+        for obj in bpy.context.scene.objects:
+            if obj.name == 'Sphere':
+                mesh_obj = bpy.data.objects.get("Sphere")
+                bpy.data.meshes.remove(mesh_obj.data, do_unlink=True)
 
         cloud_verts = bpy.data.objects['point cloud'].data.vertices
 
@@ -574,6 +581,7 @@ class BoundSphere(Operator):
         for v in cloud_verts:
             if v.hide == False:
                 unhide_vert.append(v)
+        print(len(unhide_vert))
 
         x_min = min(v.co.x for v in unhide_vert)
         x_max = max(v.co.x for v in unhide_vert)
@@ -592,6 +600,24 @@ class BoundSphere(Operator):
         bpy.ops.mesh.primitive_uv_sphere_add(radius=Radius, location=(center_x, center_y, center_z))
 
         print("create bounding sphere finished")
+        return {'FINISHED'}
+
+
+class Hidebox(Operator):
+    bl_label = "hide bounding box"
+    bl_idname = "my.hide_box"
+
+    def execute(self, context):
+        bpy.context.scene.objects['cropping plane'].hide_set(True)
+        return {'FINISHED'}
+
+
+class Showbox(Operator):
+    bl_label = "show bounding box"
+    bl_idname = "my.show_box"
+
+    def execute(self, context):
+        bpy.context.scene.objects['cropping plane'].hide_set(False)
         return {'FINISHED'}
 
 
@@ -616,10 +642,17 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.operator("my.debug")
         layout.separator()
 
+        row1 = layout.row()
+        row1.alignment = 'CENTER'
+        row1.label(text="edit bounding box")
         layout.row().prop(mytool, "my_slider")
         layout.separator()
 
         layout.operator("my.crop")
+        row2 = layout.row()
+        row2.operator("my.hide_box")
+        split = row2.split(factor=1)
+        split.operator("my.show_box")
         layout.separator()
 
         layout.operator("my.add_bound_sphere")
@@ -637,6 +670,8 @@ classes = (
     NeuralangeloCustomPanel,
     Crop,
     BoundSphere,
+    Hidebox,
+    Showbox,
 )
 
 
