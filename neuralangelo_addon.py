@@ -358,7 +358,89 @@ def display_pointcloud(points3D):
 
 
 def generate_cropping_planes():
+    points3D = colmap_data['points3D']
+    xyzs = np.stack([point.xyz for point in points3D.values()])
+
+    x_min = min(xyzs[:, 0])
+    x_max = max(xyzs[:, 0])
+    y_min = min(xyzs[:, 1])
+    y_max = max(xyzs[:, 1])
+    z_min = min(xyzs[:, 2])
+    z_max = max(xyzs[:, 2])
+
+    verts = [[x_max, y_max, z_min],
+             [x_max, y_min, z_min],
+             [x_min, y_min, z_min],
+             [x_min, y_max, z_min],
+             [x_max, y_max, z_max],
+             [x_max, y_min, z_max],
+             [x_min, y_min, z_max],
+             [x_min, y_max, z_max]]
+
+    faces = [[0, 1, 5, 4],
+             [3, 2, 6, 7],
+             [0, 3, 7, 4],
+             [1, 2, 6, 5],
+             [0, 1, 2, 3],
+             [4, 5, 6, 7]]
+
+    msh = bpy.data.meshes.new("mesh of cropping plane")
+    msh.from_pydata(verts, [], faces)
+    obj = bpy.data.objects.new("cropping plane", msh)
+    bpy.context.scene.collection.objects.link(obj)
+
     return
+
+
+def update_cropping_plane(scene, depsgraph):
+    point_cloud = bpy.data.objects['point cloud'].data
+    cloud_verts = [v for v in point_cloud.vertices]
+
+    x_min = min(v.co.x for v in cloud_verts)
+    x_max = max(v.co.x for v in cloud_verts)
+    y_min = min(v.co.y for v in cloud_verts)
+    y_max = max(v.co.y for v in cloud_verts)
+    z_min = min(v.co.z for v in cloud_verts)
+    z_max = max(v.co.z for v in cloud_verts)
+
+    slider = bpy.context.scene.my_tool.my_slider
+    crop_plane = bpy.data.objects['cropping plane']
+
+    x_change = slider[0]
+    y_change = slider[1]
+    z_change = slider[2]
+
+    crop_plane.data.vertices[0].co.x = x_max + x_change
+    crop_plane.data.vertices[0].co.y = y_max + y_change
+    crop_plane.data.vertices[0].co.z = z_min - z_change
+
+    crop_plane.data.vertices[1].co.x = x_max + x_change
+    crop_plane.data.vertices[1].co.y = y_min - y_change
+    crop_plane.data.vertices[1].co.z = z_min - z_change
+
+    crop_plane.data.vertices[2].co.x = x_min - x_change
+    crop_plane.data.vertices[2].co.y = y_min - y_change
+    crop_plane.data.vertices[2].co.z = z_min - z_change
+
+    crop_plane.data.vertices[3].co.x = x_min - x_change
+    crop_plane.data.vertices[3].co.y = y_max + y_change
+    crop_plane.data.vertices[3].co.z = z_min - z_change
+
+    crop_plane.data.vertices[4].co.x = x_max + x_change
+    crop_plane.data.vertices[4].co.y = y_max + y_change
+    crop_plane.data.vertices[4].co.z = z_max + z_change
+
+    crop_plane.data.vertices[5].co.x = x_max + x_change
+    crop_plane.data.vertices[5].co.y = y_min - y_change
+    crop_plane.data.vertices[5].co.z = z_max + z_change
+
+    crop_plane.data.vertices[6].co.x = x_min - x_change
+    crop_plane.data.vertices[6].co.y = y_min - y_change
+    crop_plane.data.vertices[6].co.z = z_max + z_change
+
+    crop_plane.data.vertices[7].co.x = x_min - x_change
+    crop_plane.data.vertices[7].co.y = y_max + y_change
+    crop_plane.data.vertices[7].co.z = z_max + z_change
 
 
 # ------------------------------------------------------------------------
@@ -375,6 +457,14 @@ class MyProperties(PropertyGroup):
         default="",
         maxlen=1024,
         subtype='DIR_PATH'
+    )
+    my_slider: FloatVectorProperty(
+        name="Plane offset",
+        subtype='TRANSLATION',
+        size=3,
+        min=-50,
+        max=50,
+        default=(0, 0, 0),
     )
 
 
@@ -431,6 +521,80 @@ class OT_Debug(Operator):
         return {'FINISHED'}
 
 
+class Crop(Operator):
+    '''
+    crop points outside the bounding box
+    '''
+
+    bl_label = "crop points"
+    bl_idname = "my.crop"
+
+    def execute(self, context):
+        scene = context.scene
+        mytool = scene.my_tool
+
+        plane_verts = bpy.data.objects['cropping plane'].data.vertices
+        cloud_verts = bpy.data.objects['point cloud'].data.vertices
+
+        x_min = min(v.co.x for v in plane_verts)
+        x_max = max(v.co.x for v in plane_verts)
+        y_min = min(v.co.y for v in plane_verts)
+        y_max = max(v.co.y for v in plane_verts)
+        z_min = min(v.co.z for v in plane_verts)
+        z_max = max(v.co.z for v in plane_verts)
+
+        num = 0
+        for v in cloud_verts:
+            v.hide = False
+            if x_min <= v.co.x <= x_max and y_min <= v.co.y <= y_max and z_min <= v.co.z <= z_max:
+                num += 1
+            else:
+                v.hide = True
+
+        print("crop finished unhide vertices number is:", num)
+        bpy.context.view_layer.update()
+        return {'FINISHED'}
+
+
+class BoundSphere(Operator):
+    '''
+    crop points outside the bounding box
+    '''
+
+    bl_label = "create bounding sphere"
+    bl_idname = "my.add_bound_sphere"
+
+    def execute(self, context):
+        scene = context.scene
+        mytool = scene.my_tool
+
+        cloud_verts = bpy.data.objects['point cloud'].data.vertices
+
+        unhide_vert = []
+        for v in cloud_verts:
+            if v.hide == False:
+                unhide_vert.append(v)
+
+        x_min = min(v.co.x for v in unhide_vert)
+        x_max = max(v.co.x for v in unhide_vert)
+        y_min = min(v.co.y for v in unhide_vert)
+        y_max = max(v.co.y for v in unhide_vert)
+        z_min = min(v.co.z for v in unhide_vert)
+        z_max = max(v.co.z for v in unhide_vert)
+
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
+        center_z = (z_min + z_max) / 2
+
+        Radius = max(np.sqrt((v.co.x - center_x) ** 2 + (v.co.y - center_y) ** 2 + (v.co.z - center_z) ** 2) for v in
+                     unhide_vert)
+
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=Radius, location=(center_x, center_y, center_z))
+
+        print("create bounding sphere finished")
+        return {'FINISHED'}
+
+
 # ------------------------------------------------------------------------
 #    Panel
 # ------------------------------------------------------------------------
@@ -452,43 +616,16 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.operator("my.debug")
         layout.separator()
 
+        layout.row().prop(mytool, "my_slider")
+        layout.separator()
 
-class generate_cropping_planes(bpy.types.Operator):
-    "create plane"
-    bl_idname = "mesh.add_cropping_planes"
-    bl_label = "Generate Cropping Plane"
-    bl_options = {'REGISTER', 'UNDO'}
+        layout.operator("my.crop")
+        layout.separator()
 
-    x: bpy.props.IntProperty(
-        name="Location X",
-        default=0,
-    )
-    y: bpy.props.IntProperty(
-        name="Location Y",
-        default=0,
-    )
-    size: bpy.props.FloatProperty(
-        name="size",
-        default=1,
-    )
+        layout.operator("my.add_bound_sphere")
+        layout.separator()
 
-    def execute(self, context):
-        scene = context.scene
-        mytool = scene.my_tool
 
-        cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
-        xyzs = np.stack([point.xyz for point in points3D.values()])
-
-        bpy.ops.mesh.primitive_plane_add(
-            size=self.size,
-            location=(self.x, self.y, min(xyzs[:, 2])),
-            scale=(1, 1, 1))
-
-        bpy.ops.mesh.primitive_plane_add(
-            size=self.size,
-            location=(self.x, self.y, max(xyzs[:, 2])),
-            scale=(1, 1, 1))
-        return {'FINISHED'}
 # ------------------------------------------------------------------------
 #    Registration
 # ------------------------------------------------------------------------
@@ -498,7 +635,8 @@ classes = (
     OT_LoadCOLMAP,
     OT_Debug,
     NeuralangeloCustomPanel,
-    generate_cropping_planes,
+    Crop,
+    BoundSphere,
 )
 
 
@@ -508,6 +646,7 @@ def register():
         register_class(cls)
 
     bpy.types.Scene.my_tool = PointerProperty(type=MyProperties)
+    bpy.app.handlers.depsgraph_update_post.append(update_cropping_plane)
 
 
 def unregister():
@@ -515,6 +654,7 @@ def unregister():
     for cls in reversed(classes):
         unregister_class(cls)
     del bpy.types.Scene.my_tool
+    bpy.app.handlers.depsgraph_update_post.remove(update_cropping_plane)
 
 
 if __name__ == "__main__":
