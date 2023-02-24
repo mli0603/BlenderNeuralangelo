@@ -537,7 +537,7 @@ class Crop(Operator):
 
     '''
 
-    bl_label = "crop points"
+    bl_label = "Crop Pointcloud"
     bl_idname = "my.crop"
 
     def execute(self, context):
@@ -569,7 +569,7 @@ class BoundSphere(Operator):
     crop points outside the bounding box
     '''
 
-    bl_label = "create bounding sphere"
+    bl_label = "Create Bounding Sphere"
     bl_idname = "my.add_bound_sphere"
 
     def execute(self, context):
@@ -607,21 +607,13 @@ class BoundSphere(Operator):
         return {'FINISHED'}
 
 
-class Hidebox(Operator):
-    bl_label = "hide bounding box"
-    bl_idname = "my.hide_box"
+class HideShowBox(Operator):
+    bl_label = "Hide/Show Bounding Box"
+    bl_idname = "my.hide_show_box"
 
     def execute(self, context):
-        bpy.context.scene.objects['cropping plane'].hide_set(True)
-        return {'FINISHED'}
-
-
-class Showbox(Operator):
-    bl_label = "show bounding box"
-    bl_idname = "my.show_box"
-
-    def execute(self, context):
-        bpy.context.scene.objects['cropping plane'].hide_set(False)
+        status = bpy.context.scene.objects['cropping plane'].hide_get()
+        bpy.context.scene.objects['cropping plane'].hide_set(not status)
         return {'FINISHED'}
 
 
@@ -629,12 +621,22 @@ class Showbox(Operator):
 #    Panel
 # ------------------------------------------------------------------------
 
-class NeuralangeloCustomPanel(bpy.types.Panel):
-    bl_label = "Neuralangelo"
+class NeuralangeloCustomPanel:
     bl_category = "Neuralangelo"
-    bl_idname = "VIEW_3D_neuralangelo"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
+
+class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_idname = "panel_main"
+    bl_label = "Neuralangelo Addon"
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.label("BlenderNeuralangelo")
+    
+class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id  = "panel_main"
+    bl_label = "Load Data"
 
     def draw(self, context):
         scene = context.scene
@@ -646,9 +648,18 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.operator("my.debug")
         layout.separator()
 
+class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id  = "panel_main"
+    bl_label = "Define Bounding Region"
+
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        mytool = scene.my_tool
+        
         row = layout.row()
         row.alignment = 'CENTER'
-        row.label(text="edit bounding box")
+        row.label(text="Edit bounding box")
 
         layout.row().prop(mytool, "my_slider", index=0, slider=True, text='X min')
         layout.row().prop(mytool, "my_slider", index=1, slider=True, text='X max')
@@ -659,15 +670,8 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.separator()
 
         layout.operator("my.crop")
-        row2 = layout.row()
-        row2.operator("my.hide_box")
-        split = row2.split(factor=1)
-        split.operator("my.show_box")
-        layout.separator()
-
+        layout.operator("my.hide_show_box")
         layout.operator("my.add_bound_sphere")
-        layout.separator()
-
 
 # ------------------------------------------------------------------------
 #    Registration
@@ -677,11 +681,12 @@ classes = (
     MyProperties,
     OT_LoadCOLMAP,
     OT_Debug,
-    NeuralangeloCustomPanel,
+    MainPanel,
+    LoadingPanel,
+    BoundingPanel,
     Crop,
     BoundSphere,
-    Hidebox,
-    Showbox,
+    HideShowBox
 )
 
 
