@@ -406,41 +406,44 @@ def update_cropping_plane(scene, depsgraph):
     slider = bpy.context.scene.my_tool.my_slider
     crop_plane = bpy.data.objects['cropping plane']
 
-    x_change = slider[0]
-    y_change = slider[1]
-    z_change = slider[2]
+    x_min_change = slider[0]
+    x_max_change = slider[1]
+    y_min_change = slider[2]
+    y_max_change = slider[3]
+    z_min_change = slider[4]
+    z_max_change = slider[5]
 
-    crop_plane.data.vertices[0].co.x = x_max + x_change
-    crop_plane.data.vertices[0].co.y = y_max + y_change
-    crop_plane.data.vertices[0].co.z = z_min - z_change
+    crop_plane.data.vertices[0].co.x = x_max + x_max_change
+    crop_plane.data.vertices[0].co.y = y_max + y_max_change
+    crop_plane.data.vertices[0].co.z = z_min - z_min_change
 
-    crop_plane.data.vertices[1].co.x = x_max + x_change
-    crop_plane.data.vertices[1].co.y = y_min - y_change
-    crop_plane.data.vertices[1].co.z = z_min - z_change
+    crop_plane.data.vertices[1].co.x = x_max + x_max_change
+    crop_plane.data.vertices[1].co.y = y_min - y_min_change
+    crop_plane.data.vertices[1].co.z = z_min - z_min_change
 
-    crop_plane.data.vertices[2].co.x = x_min - x_change
-    crop_plane.data.vertices[2].co.y = y_min - y_change
-    crop_plane.data.vertices[2].co.z = z_min - z_change
+    crop_plane.data.vertices[2].co.x = x_min - x_min_change
+    crop_plane.data.vertices[2].co.y = y_min - y_min_change
+    crop_plane.data.vertices[2].co.z = z_min - z_min_change
 
-    crop_plane.data.vertices[3].co.x = x_min - x_change
-    crop_plane.data.vertices[3].co.y = y_max + y_change
-    crop_plane.data.vertices[3].co.z = z_min - z_change
+    crop_plane.data.vertices[3].co.x = x_min - x_min_change
+    crop_plane.data.vertices[3].co.y = y_max + y_max_change
+    crop_plane.data.vertices[3].co.z = z_min - z_min_change
 
-    crop_plane.data.vertices[4].co.x = x_max + x_change
-    crop_plane.data.vertices[4].co.y = y_max + y_change
-    crop_plane.data.vertices[4].co.z = z_max + z_change
+    crop_plane.data.vertices[4].co.x = x_max + x_max_change
+    crop_plane.data.vertices[4].co.y = y_max + y_max_change
+    crop_plane.data.vertices[4].co.z = z_max + z_max_change
 
-    crop_plane.data.vertices[5].co.x = x_max + x_change
-    crop_plane.data.vertices[5].co.y = y_min - y_change
-    crop_plane.data.vertices[5].co.z = z_max + z_change
+    crop_plane.data.vertices[5].co.x = x_max + x_max_change
+    crop_plane.data.vertices[5].co.y = y_min - y_min_change
+    crop_plane.data.vertices[5].co.z = z_max + z_max_change
 
-    crop_plane.data.vertices[6].co.x = x_min - x_change
-    crop_plane.data.vertices[6].co.y = y_min - y_change
-    crop_plane.data.vertices[6].co.z = z_max + z_change
+    crop_plane.data.vertices[6].co.x = x_min - x_min_change
+    crop_plane.data.vertices[6].co.y = y_min - y_min_change
+    crop_plane.data.vertices[6].co.z = z_max + z_max_change
 
-    crop_plane.data.vertices[7].co.x = x_min - x_change
-    crop_plane.data.vertices[7].co.y = y_max + y_change
-    crop_plane.data.vertices[7].co.z = z_max + z_change
+    crop_plane.data.vertices[7].co.x = x_min - x_min_change
+    crop_plane.data.vertices[7].co.y = y_max + y_max_change
+    crop_plane.data.vertices[7].co.z = z_max + z_max_change
 
 
 # ------------------------------------------------------------------------
@@ -461,10 +464,11 @@ class MyProperties(PropertyGroup):
     my_slider: FloatVectorProperty(
         name="Plane offset",
         subtype='TRANSLATION',
-        size=3,
+        description="X_min, X_max ,Y_min ,Y_max ,Z_min ,Z_max",
+        size=6,
         min=-50,
         max=50,
-        default=(0, 0, 0),
+        default=(0, 0, 0, 0, 0, 0),
     )
 
 
@@ -642,10 +646,16 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.operator("my.debug")
         layout.separator()
 
-        row1 = layout.row()
-        row1.alignment = 'CENTER'
-        row1.label(text="edit bounding box")
-        layout.row().prop(mytool, "my_slider")
+        row = layout.row()
+        row.alignment = 'CENTER'
+        row.label(text="edit bounding box")
+
+        layout.row().prop(mytool, "my_slider", index=0, slider=True, text='X min')
+        layout.row().prop(mytool, "my_slider", index=1, slider=True, text='X max')
+        layout.row().prop(mytool, "my_slider", index=2, slider=True, text='Y min')
+        layout.row().prop(mytool, "my_slider", index=3, slider=True, text='Y max')
+        layout.row().prop(mytool, "my_slider", index=4, slider=True, text='Z min')
+        layout.row().prop(mytool, "my_slider", index=5, slider=True, text='Z max')
         layout.separator()
 
         layout.operator("my.crop")
@@ -694,3 +704,4 @@ def unregister():
 
 if __name__ == "__main__":
     register()
+
