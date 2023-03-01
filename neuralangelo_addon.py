@@ -413,6 +413,16 @@ def update_cropping_plane(scene, depsgraph):
     z_min_change = slider[4]
     z_max_change = slider[5]
 
+    if x_max + x_max_change < x_min - x_min_change or y_max + y_max_change < y_min - y_min_change or z_max + z_max_change < z_min - z_min_change:
+        slider[0] = 0
+        slider[1] = 0
+        slider[2] = 0
+        slider[3] = 0
+        slider[4] = 0
+        slider[5] = 0
+        print('wrong offset value !!')
+        return
+
     crop_plane.data.vertices[0].co.x = x_max + x_max_change
     crop_plane.data.vertices[0].co.y = y_max + y_max_change
     crop_plane.data.vertices[0].co.z = z_min - z_min_change
@@ -444,6 +454,21 @@ def update_cropping_plane(scene, depsgraph):
     crop_plane.data.vertices[7].co.x = x_min - x_min_change
     crop_plane.data.vertices[7].co.y = y_max + y_max_change
     crop_plane.data.vertices[7].co.z = z_max + z_max_change
+
+
+def reset_my_slider_to_default():
+    bpy.context.scene.my_tool.my_slider[0] = 0
+    bpy.context.scene.my_tool.my_slider[1] = 0
+    bpy.context.scene.my_tool.my_slider[2] = 0
+    bpy.context.scene.my_tool.my_slider[3] = 0
+    bpy.context.scene.my_tool.my_slider[4] = 0
+    bpy.context.scene.my_tool.my_slider[5] = 0
+
+
+def delete_bounding_sphere():
+    for obj in bpy.context.scene.objects:
+        if obj.name == 'Sphere':
+            bpy.data.meshes.remove(obj.data, do_unlink=True)
 
 
 # ------------------------------------------------------------------------
@@ -484,6 +509,10 @@ class OT_LoadCOLMAP(Operator):
         scene = context.scene
         mytool = scene.my_tool
 
+        for obj in bpy.context.scene.objects:
+            if obj.name != 'Camera':
+                bpy.data.meshes.remove(obj.data, do_unlink=True)
+
         print("loading data")
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
@@ -496,6 +525,7 @@ class OT_LoadCOLMAP(Operator):
 
         print("TODO: set cropping planes location")
         generate_cropping_planes()
+        reset_my_slider_to_default()
 
         print("TODO: set camera intrinsics")
 
@@ -537,11 +567,13 @@ class Crop(Operator):
 
     '''
 
-    bl_label = "Crop Pointcloud"
+    bl_label = "crop points"
     bl_idname = "my.crop"
 
     def execute(self, context):
-
+        if bpy.context.active_object.mode == 'EDIT':
+            bpy.ops.object.editmode_toggle()
+        delete_bounding_sphere()
         plane_verts = bpy.data.objects['cropping plane'].data.vertices
         cloud_verts = bpy.data.objects['point cloud'].data.vertices
 
@@ -559,6 +591,10 @@ class Crop(Operator):
                 num += 1
             else:
                 v.hide = True
+        for obj in bpy.context.scene.objects:
+            if obj.name == 'point cloud':
+                bpy.context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode='EDIT')
 
         print("crop finished; left vertices number :", num)
         return {'FINISHED'}
@@ -569,15 +605,13 @@ class BoundSphere(Operator):
     crop points outside the bounding box
     '''
 
-    bl_label = "Create Bounding Sphere"
+    bl_label = "create bounding sphere"
     bl_idname = "my.add_bound_sphere"
 
     def execute(self, context):
-
-        for obj in bpy.context.scene.objects:
-            if obj.name == 'Sphere':
-                mesh_obj = bpy.data.objects.get("Sphere")
-                bpy.data.meshes.remove(mesh_obj.data, do_unlink=True)
+        if bpy.context.active_object.mode == 'EDIT':
+            bpy.ops.object.editmode_toggle()
+        delete_bounding_sphere()
 
         cloud_verts = bpy.data.objects['point cloud'].data.vertices
 
@@ -602,18 +636,30 @@ class BoundSphere(Operator):
                      unhide_vert)
 
         bpy.ops.mesh.primitive_uv_sphere_add(radius=Radius, location=(center_x, center_y, center_z))
+        for obj in bpy.context.scene.objects:
+            if obj.name == 'point cloud':
+                bpy.context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode='EDIT')
 
         print("create bounding sphere finished")
         return {'FINISHED'}
 
 
-class HideShowBox(Operator):
-    bl_label = "Hide/Show Bounding Box"
-    bl_idname = "my.hide_show_box"
+class Hidebox(Operator):
+    bl_label = "hide bounding box"
+    bl_idname = "my.hide_box"
 
     def execute(self, context):
-        status = bpy.context.scene.objects['cropping plane'].hide_get()
-        bpy.context.scene.objects['cropping plane'].hide_set(not status)
+        bpy.context.scene.objects['cropping plane'].hide_set(True)
+        return {'FINISHED'}
+
+
+class Showbox(Operator):
+    bl_label = "show bounding box"
+    bl_idname = "my.show_box"
+
+    def execute(self, context):
+        bpy.context.scene.objects['cropping plane'].hide_set(False)
         return {'FINISHED'}
 
 
@@ -621,22 +667,12 @@ class HideShowBox(Operator):
 #    Panel
 # ------------------------------------------------------------------------
 
-class NeuralangeloCustomPanel:
+class NeuralangeloCustomPanel(bpy.types.Panel):
+    bl_label = "Neuralangelo"
     bl_category = "Neuralangelo"
+    bl_idname = "VIEW_3D_neuralangelo"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-
-class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_idname = "panel_main"
-    bl_label = "Neuralangelo Addon"
-    
-    def draw(self, context):
-        layout = self.layout
-        layout.label("BlenderNeuralangelo")
-    
-class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id  = "panel_main"
-    bl_label = "Load Data"
 
     def draw(self, context):
         scene = context.scene
@@ -648,18 +684,9 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout.operator("my.debug")
         layout.separator()
 
-class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id  = "panel_main"
-    bl_label = "Define Bounding Region"
-
-    def draw(self, context):
-        scene = context.scene
-        layout = self.layout
-        mytool = scene.my_tool
-        
         row = layout.row()
         row.alignment = 'CENTER'
-        row.label(text="Edit bounding box")
+        row.label(text="edit bounding box")
 
         layout.row().prop(mytool, "my_slider", index=0, slider=True, text='X min')
         layout.row().prop(mytool, "my_slider", index=1, slider=True, text='X max')
@@ -670,8 +697,15 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout.separator()
 
         layout.operator("my.crop")
-        layout.operator("my.hide_show_box")
+        row2 = layout.row()
+        row2.operator("my.hide_box")
+        split = row2.split(factor=1)
+        split.operator("my.show_box")
+        layout.separator()
+
         layout.operator("my.add_bound_sphere")
+        layout.separator()
+
 
 # ------------------------------------------------------------------------
 #    Registration
@@ -681,12 +715,11 @@ classes = (
     MyProperties,
     OT_LoadCOLMAP,
     OT_Debug,
-    MainPanel,
-    LoadingPanel,
-    BoundingPanel,
+    NeuralangeloCustomPanel,
     Crop,
     BoundSphere,
-    HideShowBox
+    Hidebox,
+    Showbox,
 )
 
 
