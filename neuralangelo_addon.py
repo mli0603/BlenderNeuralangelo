@@ -324,6 +324,7 @@ from bpy.types import (Panel,
 
 # global variable for easier access
 colmap_data = {}
+old_box_offset = [0, 0, 0, 0, 0, 0]
 
 
 # ------------------------------------------------------------------------
@@ -393,6 +394,8 @@ def generate_cropping_planes():
 
 
 def update_cropping_plane(scene, depsgraph):
+    global old_box_offset
+
     point_cloud = bpy.data.objects['point cloud'].data
     cloud_verts = [v for v in point_cloud.vertices]
 
@@ -413,15 +416,26 @@ def update_cropping_plane(scene, depsgraph):
     z_min_change = slider[4]
     z_max_change = slider[5]
 
-    if x_max + x_max_change < x_min - x_min_change or y_max + y_max_change < y_min - y_min_change or z_max + z_max_change < z_min - z_min_change:
-        slider[0] = 0
-        slider[1] = 0
-        slider[2] = 0
-        slider[3] = 0
-        slider[4] = 0
-        slider[5] = 0
-        print('wrong offset value !!')
-        return
+    if x_min_change != old_box_offset[0] and x_max + x_max_change < x_min - x_min_change:
+        x_min_change = x_min - (x_max + x_max_change)
+        slider[0] = old_box_offset[0]
+    elif x_max_change != old_box_offset[1] and x_max + x_max_change < x_min - x_min_change:
+        x_max_change = x_min - x_min_change - x_max
+        slider[1] = old_box_offset[1]
+    elif y_min_change != old_box_offset[2] and y_max + y_max_change < y_min - y_min_change:
+        y_min_change = y_min - (y_max + y_max_change)
+        slider[2] = old_box_offset[2]
+    elif y_max_change != old_box_offset[3] and y_max + y_max_change < y_min - y_min_change:
+        y_max_change = y_min - y_min_change - y_max
+        slider[3] = old_box_offset[3]
+    elif z_min_change != old_box_offset[4] and z_max + z_max_change < z_min - z_min_change:
+        z_min_change = z_min - (z_max + z_max_change)
+        slider[4] = old_box_offset[4]
+    elif z_max_change != old_box_offset[5] and z_max + z_max_change < z_min - z_min_change:
+        z_max_change = z_min - z_min_change - z_max
+        slider[5] = old_box_offset[5]
+
+    old_box_offset = [n for n in slider]
 
     crop_plane.data.vertices[0].co.x = x_max + x_max_change
     crop_plane.data.vertices[0].co.y = y_max + y_max_change
@@ -567,7 +581,7 @@ class Crop(Operator):
 
     '''
 
-    bl_label = "crop points"
+    bl_label = "crop Pointcloud"
     bl_idname = "my.crop"
 
     def execute(self, context):
@@ -605,7 +619,7 @@ class BoundSphere(Operator):
     crop points outside the bounding box
     '''
 
-    bl_label = "create bounding sphere"
+    bl_label = "Create Bounding Sphere"
     bl_idname = "my.add_bound_sphere"
 
     def execute(self, context):
@@ -645,21 +659,13 @@ class BoundSphere(Operator):
         return {'FINISHED'}
 
 
-class Hidebox(Operator):
-    bl_label = "hide bounding box"
-    bl_idname = "my.hide_box"
+class HideShowBox(Operator):
+    bl_label = "Hide/Show Bounding Box"
+    bl_idname = "my.hide_show_box"
 
     def execute(self, context):
-        bpy.context.scene.objects['cropping plane'].hide_set(True)
-        return {'FINISHED'}
-
-
-class Showbox(Operator):
-    bl_label = "show bounding box"
-    bl_idname = "my.show_box"
-
-    def execute(self, context):
-        bpy.context.scene.objects['cropping plane'].hide_set(False)
+        status = bpy.context.scene.objects['cropping plane'].hide_get()
+        bpy.context.scene.objects['cropping plane'].hide_set(not status)
         return {'FINISHED'}
 
 
@@ -668,11 +674,23 @@ class Showbox(Operator):
 # ------------------------------------------------------------------------
 
 class NeuralangeloCustomPanel(bpy.types.Panel):
-    bl_label = "Neuralangelo"
     bl_category = "Neuralangelo"
-    bl_idname = "VIEW_3D_neuralangelo"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
+
+
+class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_idname = "panel_main"
+    bl_label = "Neuralangelo Addon"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="BlenderNeuralangelo")
+
+
+class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id = "panel_main"
+    bl_label = "Load Data"
 
     def draw(self, context):
         scene = context.scene
@@ -684,9 +702,19 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.operator("my.debug")
         layout.separator()
 
+
+class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id = "panel_main"
+    bl_label = "Define Bounding Region"
+
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        mytool = scene.my_tool
+
         row = layout.row()
         row.alignment = 'CENTER'
-        row.label(text="edit bounding box")
+        row.label(text="Edit bounding box")
 
         layout.row().prop(mytool, "my_slider", index=0, slider=True, text='X min')
         layout.row().prop(mytool, "my_slider", index=1, slider=True, text='X max')
@@ -697,11 +725,7 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
         layout.separator()
 
         layout.operator("my.crop")
-        row2 = layout.row()
-        row2.operator("my.hide_box")
-        split = row2.split(factor=1)
-        split.operator("my.show_box")
-        layout.separator()
+        layout.operator("my.hide_show_box")
 
         layout.operator("my.add_bound_sphere")
         layout.separator()
@@ -715,11 +739,12 @@ classes = (
     MyProperties,
     OT_LoadCOLMAP,
     OT_Debug,
-    NeuralangeloCustomPanel,
+    MainPanel,
+    LoadingPanel,
+    BoundingPanel,
     Crop,
     BoundSphere,
-    Hidebox,
-    Showbox,
+    HideShowBox
 )
 
 
