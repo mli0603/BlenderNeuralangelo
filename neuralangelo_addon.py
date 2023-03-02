@@ -325,7 +325,7 @@ from bpy.types import (Panel,
 # global variable for easier access
 colmap_data = {}
 old_box_offset = [0, 0, 0, 0, 0, 0]
-
+view_port = None
 
 # ------------------------------------------------------------------------
 #    Utility scripts
@@ -488,6 +488,8 @@ def delete_bounding_sphere():
 # TODO: can this be cleaned up??
 def switch_viewport_to_solid(self, context):
     toggle = context.scene.my_tool.transparency_toggle
+#    view_port.shading.type='SOLID'
+#    view_port.shading.show_xray=toggle
     for area in bpy.context.screen.areas: 
         if area.type == 'VIEW_3D':
             for space in area.spaces: 
@@ -533,15 +535,22 @@ class MyProperties(PropertyGroup):
         description="Transparency",
         min=0,
         max=1,
-        default=0.5,
+        default=0.1,
         update=update_transparency
     )
     transparency_toggle : BoolProperty(
-        name="Toggle Transparency",
+        name="",
         description="Toggle transparency",
-        default = False,
+        default = True,
         update=switch_viewport_to_solid
-    ) # TODO: how to disable slider??
+    )
+    
+#    for area in bpy.context.screen.areas: 
+#        if area.type == 'VIEW_3D':
+#            for space in area.spaces: 
+#                if space.type == 'VIEW_3D':
+#                    global view_port
+#                    view_port = space
 
 
 # ------------------------------------------------------------------------
@@ -660,8 +669,6 @@ class BoundSphere(Operator):
     bl_idname = "my.add_bound_sphere"
 
     def execute(self, context):
-        if bpy.context.active_object.mode == 'EDIT':
-            bpy.ops.object.editmode_toggle()
         delete_bounding_sphere()
 
         cloud_verts = bpy.data.objects['point cloud'].data.vertices
@@ -687,6 +694,7 @@ class BoundSphere(Operator):
         Radius = max(np.sqrt((v.co.x - center_x) ** 2 + (v.co.y - center_y) ** 2 + (v.co.z - center_z) ** 2) for v in
                      unhide_vert)
 
+        # TODO: the bounding sphere needs to be a new mesh similar to bounding b
         bpy.ops.mesh.primitive_uv_sphere_add(radius=Radius, location=(center_x, center_y, center_z))
         for obj in bpy.context.scene.objects:
             # TODO: this can be directly retrieved instead of a for loop
@@ -756,20 +764,28 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row.alignment = 'CENTER'
         row.label(text="Edit bounding box")
         
-        layout.prop(mytool, "transparency_toggle")
-        layout.row().prop(mytool, "transparency_slider", slider=True, text='Transparency')
+        row = layout.row(align=True)
+        row.prop(mytool, "transparency_toggle")
+        sub = row.row()
+        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency')
+        sub.enabled = mytool.transparency_toggle
         layout.separator()
         
-        layout.row().prop(mytool, "my_slider", index=0, slider=True, text='X min')
-        layout.row().prop(mytool, "my_slider", index=1, slider=True, text='X max')
-        layout.row().prop(mytool, "my_slider", index=2, slider=True, text='Y min')
-        layout.row().prop(mytool, "my_slider", index=3, slider=True, text='Y max')
-        layout.row().prop(mytool, "my_slider", index=4, slider=True, text='Z min')
-        layout.row().prop(mytool, "my_slider", index=5, slider=True, text='Z max')
-        layout.separator()
+        layout.row().operator("my.hide_show_box")
+        layout.row().operator("my.crop")
+        
+        x_row = layout.row()
+        x_row.prop(mytool, "my_slider", index=0, slider=True, text='X min')
+        x_row.prop(mytool, "my_slider", index=1, slider=True, text='X max')
 
-        layout.operator("my.crop")
-        layout.operator("my.hide_show_box")
+        y_row = layout.row()
+        y_row.prop(mytool, "my_slider", index=2, slider=True, text='Y min')
+        y_row.prop(mytool, "my_slider", index=3, slider=True, text='Y max')
+        
+        z_row = layout.row()
+        z_row.prop(mytool, "my_slider", index=4, slider=True, text='Z min')
+        z_row.prop(mytool, "my_slider", index=5, slider=True, text='Z max')
+        layout.separator()
 
         layout.operator("my.add_bound_sphere")
         layout.separator()
