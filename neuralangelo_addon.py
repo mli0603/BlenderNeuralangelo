@@ -485,6 +485,25 @@ def delete_bounding_sphere():
             bpy.data.meshes.remove(obj.data, do_unlink=True)
 
 
+# TODO: can this be cleaned up??
+def switch_viewport_to_solid(self, context):
+    toggle = context.scene.my_tool.transparency_toggle
+    for area in bpy.context.screen.areas: 
+        if area.type == 'VIEW_3D':
+            for space in area.spaces: 
+                if space.type == 'VIEW_3D':
+                    space.shading.type = 'SOLID'
+                    space.shading.show_xray= toggle
+    
+def update_transparency(self, context):
+    for area in bpy.context.screen.areas: 
+        if area.type == 'VIEW_3D':
+            for space in area.spaces: 
+                if space.type == 'VIEW_3D':
+                    alpha = context.scene.my_tool.transparency_slider
+                    space.shading.xray_alpha = alpha
+                    
+    
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -500,15 +519,29 @@ class MyProperties(PropertyGroup):
         maxlen=1024,
         subtype='DIR_PATH'
     )
-    my_slider: FloatVectorProperty(
+    my_slider: FloatVectorProperty( #TODO: 'my_xxx' is a super bad naming convention
         name="Plane offset",
         subtype='TRANSLATION',
         description="X_min, X_max ,Y_min ,Y_max ,Z_min ,Z_max",
         size=6,
-        min=-50,
+        min=-50, # TODO: can we do better than predefined values?
         max=50,
         default=(0, 0, 0, 0, 0, 0),
     )
+    transparency_slider: FloatProperty(
+        name="Transparency",
+        description="Transparency",
+        min=0,
+        max=1,
+        default=0.5,
+        update=update_transparency
+    )
+    transparency_toggle : BoolProperty(
+        name="Toggle Transparency",
+        description="Toggle transparency",
+        default = False,
+        update=switch_viewport_to_solid
+    ) # TODO: how to disable slider??
 
 
 # ------------------------------------------------------------------------
@@ -536,7 +569,7 @@ class OT_LoadCOLMAP(Operator):
         colmap_data['cameras'] = cameras
         colmap_data['images'] = images
         colmap_data['points3D'] = points3D
-
+        
         print("TODO: set cropping planes location")
         generate_cropping_planes()
         reset_my_slider_to_default()
@@ -581,7 +614,7 @@ class Crop(Operator):
 
     '''
 
-    bl_label = "crop Pointcloud"
+    bl_label = "Crop Pointcloud"
     bl_idname = "my.crop"
 
     def execute(self, context):
@@ -591,6 +624,7 @@ class Crop(Operator):
         plane_verts = bpy.data.objects['cropping plane'].data.vertices
         cloud_verts = bpy.data.objects['point cloud'].data.vertices
 
+        # TODO: this is inefficient
         x_min = min(v.co.x for v in plane_verts)
         x_max = max(v.co.x for v in plane_verts)
         y_min = min(v.co.y for v in plane_verts)
@@ -599,12 +633,15 @@ class Crop(Operator):
         z_max = max(v.co.z for v in plane_verts)
 
         num = 0
+        # TODO: can this be improved??
         for v in cloud_verts:
             v.hide = False
             if x_min <= v.co.x <= x_max and y_min <= v.co.y <= y_max and z_min <= v.co.z <= z_max:
                 num += 1
             else:
                 v.hide = True
+                
+        # TODO: this can be directly retrieved
         for obj in bpy.context.scene.objects:
             if obj.name == 'point cloud':
                 bpy.context.view_layer.objects.active = obj
@@ -635,6 +672,7 @@ class BoundSphere(Operator):
                 unhide_vert.append(v)
         print(len(unhide_vert))
 
+        # TODO: this is inefficient
         x_min = min(v.co.x for v in unhide_vert)
         x_max = max(v.co.x for v in unhide_vert)
         y_min = min(v.co.y for v in unhide_vert)
@@ -651,6 +689,7 @@ class BoundSphere(Operator):
 
         bpy.ops.mesh.primitive_uv_sphere_add(radius=Radius, location=(center_x, center_y, center_z))
         for obj in bpy.context.scene.objects:
+            # TODO: this can be directly retrieved instead of a for loop
             if obj.name == 'point cloud':
                 bpy.context.view_layer.objects.active = obj
                 bpy.ops.object.mode_set(mode='EDIT')
@@ -669,6 +708,7 @@ class HideShowBox(Operator):
         return {'FINISHED'}
 
 
+
 # ------------------------------------------------------------------------
 #    Panel
 # ------------------------------------------------------------------------
@@ -685,7 +725,7 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="BlenderNeuralangelo")
+        # TODO: change transparency
 
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
@@ -715,7 +755,11 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = layout.row()
         row.alignment = 'CENTER'
         row.label(text="Edit bounding box")
-
+        
+        layout.prop(mytool, "transparency_toggle")
+        layout.row().prop(mytool, "transparency_slider", slider=True, text='Transparency')
+        layout.separator()
+        
         layout.row().prop(mytool, "my_slider", index=0, slider=True, text='X min')
         layout.row().prop(mytool, "my_slider", index=1, slider=True, text='X max')
         layout.row().prop(mytool, "my_slider", index=2, slider=True, text='Y min')
