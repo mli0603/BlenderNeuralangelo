@@ -528,12 +528,12 @@ class MyProperties(PropertyGroup):
         maxlen=1024,
         subtype='DIR_PATH'
     )
-    box_slider: FloatVectorProperty(  # TODO: 'my_xxx' is a super bad naming convention
+    box_slider: FloatVectorProperty(
         name="Plane offset",
         subtype='TRANSLATION',
         description="X_min, X_max ,Y_min ,Y_max ,Z_min ,Z_max",
         size=6,
-        min=0,  # TODO: can we do better than predefined values?
+        min=0,
         max=20,
         default=(0, 0, 0, 0, 0, 0),
     )
@@ -592,8 +592,6 @@ class OT_LoadCOLMAP(Operator):
         colmap_data['points3D'] = points3D
 
         point_cloud_vertices = np.stack([point.xyz for point in points3D.values()])
-
-        print("TODO: set cropping planes location")
 
         generate_cropping_planes()
         reset_my_slider_to_default()
@@ -672,7 +670,6 @@ class Crop(Operator):
         for index in select_point_index[0]:
             bpy.data.objects['point cloud'].data.vertices[index].hide = False
 
-        # TODO: this can be directly retrieved
         if 'point cloud' in bpy.data.objects:
             obj = bpy.context.scene.objects['point cloud']
             bpy.context.view_layer.objects.active = obj
@@ -801,7 +798,6 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        # TODO: change transparency
 
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
