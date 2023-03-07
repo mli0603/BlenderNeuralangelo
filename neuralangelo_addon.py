@@ -326,6 +326,9 @@ from bpy.types import (Panel,
 colmap_data = {}
 old_box_offset = [0, 0, 0, 0, 0, 0]
 view_port = None
+point_cloud_vertices = []
+select_point_index = []
+
 
 # ------------------------------------------------------------------------
 #    Utility scripts
@@ -359,15 +362,17 @@ def display_pointcloud(points3D):
 
 
 def generate_cropping_planes():
-    points3D = colmap_data['points3D']
-    xyzs = np.stack([point.xyz for point in points3D.values()])
+    global point_cloud_vertices
 
-    x_min = min(xyzs[:, 0])
-    x_max = max(xyzs[:, 0])
-    y_min = min(xyzs[:, 1])
-    y_max = max(xyzs[:, 1])
-    z_min = min(xyzs[:, 2])
-    z_max = max(xyzs[:, 2])
+    max_coordinate = np.max(point_cloud_vertices, axis=0)
+    min_coordinate = np.min(point_cloud_vertices, axis=0)
+
+    x_min = min_coordinate[0]
+    x_max = max_coordinate[0]
+    y_min = min_coordinate[1]
+    y_max = max_coordinate[1]
+    z_min = min_coordinate[2]
+    z_max = max_coordinate[2]
 
     verts = [[x_max, y_max, z_min],
              [x_max, y_min, z_min],
@@ -395,26 +400,27 @@ def generate_cropping_planes():
 
 def update_cropping_plane(scene, depsgraph):
     global old_box_offset
+    global point_cloud_vertices
 
-    point_cloud = bpy.data.objects['point cloud'].data
-    cloud_verts = [v for v in point_cloud.vertices]
+    max_coordinate = np.max(point_cloud_vertices, axis=0)
+    min_coordinate = np.min(point_cloud_vertices, axis=0)
 
-    x_min = min(v.co.x for v in cloud_verts)
-    x_max = max(v.co.x for v in cloud_verts)
-    y_min = min(v.co.y for v in cloud_verts)
-    y_max = max(v.co.y for v in cloud_verts)
-    z_min = min(v.co.z for v in cloud_verts)
-    z_max = max(v.co.z for v in cloud_verts)
+    x_min = min_coordinate[0]
+    x_max = max_coordinate[0]
+    y_min = min_coordinate[1]
+    y_max = max_coordinate[1]
+    z_min = min_coordinate[2]
+    z_max = max_coordinate[2]
 
-    slider = bpy.context.scene.my_tool.my_slider
+    slider = bpy.context.scene.my_tool.box_slider
     crop_plane = bpy.data.objects['cropping plane']
 
-    x_min_change = slider[0]
-    x_max_change = slider[1]
-    y_min_change = slider[2]
-    y_max_change = slider[3]
-    z_min_change = slider[4]
-    z_max_change = slider[5]
+    x_min_change = -slider[0]
+    x_max_change = -slider[1]
+    y_min_change = -slider[2]
+    y_max_change = -slider[3]
+    z_min_change = -slider[4]
+    z_max_change = -slider[5]
 
     if x_min_change != old_box_offset[0] and x_max + x_max_change < x_min - x_min_change:
         x_min_change = x_min - (x_max + x_max_change)
@@ -471,41 +477,42 @@ def update_cropping_plane(scene, depsgraph):
 
 
 def reset_my_slider_to_default():
-    bpy.context.scene.my_tool.my_slider[0] = 0
-    bpy.context.scene.my_tool.my_slider[1] = 0
-    bpy.context.scene.my_tool.my_slider[2] = 0
-    bpy.context.scene.my_tool.my_slider[3] = 0
-    bpy.context.scene.my_tool.my_slider[4] = 0
-    bpy.context.scene.my_tool.my_slider[5] = 0
+    bpy.context.scene.my_tool.box_slider[0] = 0
+    bpy.context.scene.my_tool.box_slider[1] = 0
+    bpy.context.scene.my_tool.box_slider[2] = 0
+    bpy.context.scene.my_tool.box_slider[3] = 0
+    bpy.context.scene.my_tool.box_slider[4] = 0
+    bpy.context.scene.my_tool.box_slider[5] = 0
 
 
 def delete_bounding_sphere():
-    for obj in bpy.context.scene.objects:
-        if obj.name == 'Sphere':
-            bpy.data.meshes.remove(obj.data, do_unlink=True)
+    if 'Bounding Sphere' in bpy.data.objects:
+        obj = bpy.context.scene.objects['Bounding Sphere']
+        bpy.data.meshes.remove(obj.data, do_unlink=True)
 
 
 # TODO: can this be cleaned up??
 def switch_viewport_to_solid(self, context):
     toggle = context.scene.my_tool.transparency_toggle
-#    view_port.shading.type='SOLID'
-#    view_port.shading.show_xray=toggle
-    for area in bpy.context.screen.areas: 
+    #    view_port.shading.type='SOLID'
+    #    view_port.shading.show_xray=toggle
+    for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':
-            for space in area.spaces: 
+            for space in area.spaces:
                 if space.type == 'VIEW_3D':
                     space.shading.type = 'SOLID'
-                    space.shading.show_xray= toggle
-    
+                    space.shading.show_xray = toggle
+
+
 def update_transparency(self, context):
-    for area in bpy.context.screen.areas: 
+    for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':
-            for space in area.spaces: 
+            for space in area.spaces:
                 if space.type == 'VIEW_3D':
                     alpha = context.scene.my_tool.transparency_slider
                     space.shading.xray_alpha = alpha
-                    
-    
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -521,13 +528,13 @@ class MyProperties(PropertyGroup):
         maxlen=1024,
         subtype='DIR_PATH'
     )
-    my_slider: FloatVectorProperty( #TODO: 'my_xxx' is a super bad naming convention
+    box_slider: FloatVectorProperty(  # TODO: 'my_xxx' is a super bad naming convention
         name="Plane offset",
         subtype='TRANSLATION',
         description="X_min, X_max ,Y_min ,Y_max ,Z_min ,Z_max",
         size=6,
-        min=-50, # TODO: can we do better than predefined values?
-        max=50,
+        min=0,  # TODO: can we do better than predefined values?
+        max=20,
         default=(0, 0, 0, 0, 0, 0),
     )
     transparency_slider: FloatProperty(
@@ -538,16 +545,17 @@ class MyProperties(PropertyGroup):
         default=0.1,
         update=update_transparency
     )
-    transparency_toggle : BoolProperty(
+    transparency_toggle: BoolProperty(
         name="",
         description="Toggle transparency",
-        default = True,
+        default=True,
         update=switch_viewport_to_solid
     )
-    
-#    for area in bpy.context.screen.areas: 
+
+
+#    for area in bpy.context.screen.areas:
 #        if area.type == 'VIEW_3D':
-#            for space in area.spaces: 
+#            for space in area.spaces:
 #                if space.type == 'VIEW_3D':
 #                    global view_port
 #                    view_port = space
@@ -570,16 +578,23 @@ class OT_LoadCOLMAP(Operator):
                 bpy.data.meshes.remove(obj.data, do_unlink=True)
 
         print("loading data")
+
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
 
         print("store colmap data")
+
         global colmap_data
+        global point_cloud_vertices
+
         colmap_data['cameras'] = cameras
         colmap_data['images'] = images
         colmap_data['points3D'] = points3D
-        
+
+        point_cloud_vertices = np.stack([point.xyz for point in points3D.values()])
+
         print("TODO: set cropping planes location")
+
         generate_cropping_planes()
         reset_my_slider_to_default()
 
@@ -614,13 +629,10 @@ class OT_Debug(Operator):
 class Crop(Operator):
     '''
     crop points outside the bounding box
-
     note: if you want to see the result of point cropping, please follow the steps:
-
             1.click "crop points" button
             2.enter the edit mode
             3.hide the cropping plane
-
     '''
 
     bl_label = "Crop Pointcloud"
@@ -630,33 +642,42 @@ class Crop(Operator):
         if bpy.context.active_object.mode == 'EDIT':
             bpy.ops.object.editmode_toggle()
         delete_bounding_sphere()
-        plane_verts = bpy.data.objects['cropping plane'].data.vertices
-        cloud_verts = bpy.data.objects['point cloud'].data.vertices
 
-        # TODO: this is inefficient
-        x_min = min(v.co.x for v in plane_verts)
-        x_max = max(v.co.x for v in plane_verts)
-        y_min = min(v.co.y for v in plane_verts)
-        y_max = max(v.co.y for v in plane_verts)
-        z_min = min(v.co.z for v in plane_verts)
-        z_max = max(v.co.z for v in plane_verts)
+        global point_cloud_vertices
+        global select_point_index
 
-        num = 0
-        # TODO: can this be improved??
-        for v in cloud_verts:
-            v.hide = False
-            if x_min <= v.co.x <= x_max and y_min <= v.co.y <= y_max and z_min <= v.co.z <= z_max:
-                num += 1
-            else:
-                v.hide = True
-                
+        box_verts = np.array([v.co for v in bpy.data.objects['cropping plane'].data.vertices])
+
+        max_coordinate = np.max(box_verts, axis=0)
+        min_coordinate = np.min(box_verts, axis=0)
+
+        x_min = min_coordinate[0]
+        x_max = max_coordinate[0]
+        y_min = min_coordinate[1]
+        y_max = max_coordinate[1]
+        z_min = min_coordinate[2]
+        z_max = max_coordinate[2]
+
+        # initialization
+        mesh = bpy.data.objects['point cloud'].data
+        mesh.vertices.foreach_set("hide", [True] * len(mesh.vertices))
+        print(np.where(point_cloud_vertices[:, 0] > 1))
+        select_point_index = np.where((point_cloud_vertices[:, 0] >= x_min) &
+                                      (point_cloud_vertices[:, 0] <= x_max) &
+                                      (point_cloud_vertices[:, 1] >= y_min) &
+                                      (point_cloud_vertices[:, 1] <= y_max) &
+                                      (point_cloud_vertices[:, 2] >= z_min) &
+                                      (point_cloud_vertices[:, 2] <= z_max))
+
+        for index in select_point_index[0]:
+            bpy.data.objects['point cloud'].data.vertices[index].hide = False
+
         # TODO: this can be directly retrieved
-        for obj in bpy.context.scene.objects:
-            if obj.name == 'point cloud':
-                bpy.context.view_layer.objects.active = obj
-                bpy.ops.object.mode_set(mode='EDIT')
+        if 'point cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['point cloud']
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='EDIT')
 
-        print("crop finished; left vertices number :", num)
         return {'FINISHED'}
 
 
@@ -669,40 +690,69 @@ class BoundSphere(Operator):
     bl_idname = "my.add_bound_sphere"
 
     def execute(self, context):
+        global point_cloud_vertices
+        global select_point_index
+
+        if bpy.context.active_object.mode == 'EDIT':
+            bpy.ops.object.editmode_toggle()
         delete_bounding_sphere()
 
-        cloud_verts = bpy.data.objects['point cloud'].data.vertices
+        unhide_verts = point_cloud_vertices[select_point_index]
 
-        unhide_vert = []
-        for v in cloud_verts:
-            if v.hide == False:
-                unhide_vert.append(v)
-        print(len(unhide_vert))
+        max_coordinate = np.max(unhide_verts, axis=0)
+        min_coordinate = np.min(unhide_verts, axis=0)
 
-        # TODO: this is inefficient
-        x_min = min(v.co.x for v in unhide_vert)
-        x_max = max(v.co.x for v in unhide_vert)
-        y_min = min(v.co.y for v in unhide_vert)
-        y_max = max(v.co.y for v in unhide_vert)
-        z_min = min(v.co.z for v in unhide_vert)
-        z_max = max(v.co.z for v in unhide_vert)
+        x_min = min_coordinate[0]
+        x_max = max_coordinate[0]
+        y_min = min_coordinate[1]
+        y_max = max_coordinate[1]
+        z_min = min_coordinate[2]
+        z_max = max_coordinate[2]
 
         center_x = (x_min + x_max) / 2
         center_y = (y_min + y_max) / 2
         center_z = (z_min + z_max) / 2
 
-        Radius = max(np.sqrt((v.co.x - center_x) ** 2 + (v.co.y - center_y) ** 2 + (v.co.z - center_z) ** 2) for v in
-                     unhide_vert)
+        Radius = max(np.sqrt((unhide_verts[i, 0] - center_x) ** 2 + (unhide_verts[i, 1] - center_y) ** 2 + (
+                    unhide_verts[i, 2] - center_z) ** 2) for i in
+                     range(np.shape(unhide_verts)[0]))
+        center = (center_x, center_y, center_z)
 
-        # TODO: the bounding sphere needs to be a new mesh similar to bounding b
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=Radius, location=(center_x, center_y, center_z))
-        for obj in bpy.context.scene.objects:
-            # TODO: this can be directly retrieved instead of a for loop
-            if obj.name == 'point cloud':
-                bpy.context.view_layer.objects.active = obj
-                bpy.ops.object.mode_set(mode='EDIT')
+        num_segments = 128
+        sphere_verts = []
+        sphere_faces = []
 
-        print("create bounding sphere finished")
+        for i in range(num_segments):
+            theta1 = i * 2 * np.pi / num_segments
+            z = Radius * np.sin(theta1)
+            xy = Radius * np.cos(theta1)
+            for j in range(num_segments):
+                theta2 = j * 2 * np.pi / num_segments
+                x = xy * np.sin(theta2)
+                y = xy * np.cos(theta2)
+                sphere_verts.append([center[0] + x, center[1] + y, center[2] + z])
+
+        for i in range(num_segments - 1):
+            for j in range(num_segments):
+                idx1 = i * num_segments + j
+                idx2 = (i + 1) * num_segments + j
+                idx3 = (i + 1) * num_segments + (j + 1) % num_segments
+                idx4 = i * num_segments + (j + 1) % num_segments
+                sphere_faces.append([idx1, idx2, idx3])
+                sphere_faces.append([idx1, idx3, idx4])
+
+        sphere_mesh = bpy.data.meshes.new('Bounding Sphere')
+        sphere_mesh.from_pydata(sphere_verts, [], sphere_faces)
+        sphere_mesh.update()
+
+        sphere_obj = bpy.data.objects.new("Bounding Sphere", sphere_mesh)
+        bpy.context.scene.collection.objects.link(sphere_obj)
+
+        if 'point cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['point cloud']
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='EDIT')
+
         return {'FINISHED'}
 
 
@@ -715,6 +765,24 @@ class HideShowBox(Operator):
         bpy.context.scene.objects['cropping plane'].hide_set(not status)
         return {'FINISHED'}
 
+
+class HideShowSphere(Operator):
+    bl_label = "Hide/Show Bounding Sphere"
+    bl_idname = "my.hide_show_sphere"
+
+    def execute(self, context):
+        status = bpy.context.scene.objects['Bounding Sphere'].hide_get()
+        bpy.context.scene.objects['Bounding Sphere'].hide_set(not status)
+        return {'FINISHED'}
+
+
+class ReviewCloud(Operator):
+    bl_label = "Review\Hide Point Cloud"
+    bl_idname = "my.review_cloud"
+
+    def execute(self, context):
+        bpy.ops.object.editmode_toggle()
+        return {'FINISHED'}
 
 
 # ------------------------------------------------------------------------
@@ -763,32 +831,35 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = layout.row()
         row.alignment = 'CENTER'
         row.label(text="Edit bounding box")
-        
+
         row = layout.row(align=True)
         row.prop(mytool, "transparency_toggle")
         sub = row.row()
         sub.prop(mytool, "transparency_slider", slider=True, text='Transparency')
         sub.enabled = mytool.transparency_toggle
         layout.separator()
-        
+
         layout.row().operator("my.hide_show_box")
         layout.row().operator("my.crop")
-        
+
         x_row = layout.row()
-        x_row.prop(mytool, "my_slider", index=0, slider=True, text='X min')
-        x_row.prop(mytool, "my_slider", index=1, slider=True, text='X max')
+        x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
+        x_row.prop(mytool, "box_slider", index=1, slider=True, text='X max')
 
         y_row = layout.row()
-        y_row.prop(mytool, "my_slider", index=2, slider=True, text='Y min')
-        y_row.prop(mytool, "my_slider", index=3, slider=True, text='Y max')
-        
+        y_row.prop(mytool, "box_slider", index=2, slider=True, text='Y min')
+        y_row.prop(mytool, "box_slider", index=3, slider=True, text='Y max')
+
         z_row = layout.row()
-        z_row.prop(mytool, "my_slider", index=4, slider=True, text='Z min')
-        z_row.prop(mytool, "my_slider", index=5, slider=True, text='Z max')
+        z_row.prop(mytool, "box_slider", index=4, slider=True, text='Z min')
+        z_row.prop(mytool, "box_slider", index=5, slider=True, text='Z max')
         layout.separator()
 
         layout.operator("my.add_bound_sphere")
+        layout.row().operator("my.hide_show_sphere")
         layout.separator()
+
+        layout.operator("my.review_cloud")
 
 
 # ------------------------------------------------------------------------
@@ -804,7 +875,9 @@ classes = (
     BoundingPanel,
     Crop,
     BoundSphere,
-    HideShowBox
+    HideShowBox,
+    HideShowSphere,
+    ReviewCloud
 )
 
 
