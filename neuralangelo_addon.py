@@ -944,7 +944,6 @@ classes = (
     GenerateCamera
 )
 
-
 def register():
     from bpy.utils import register_class
     for cls in classes:
