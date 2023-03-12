@@ -299,11 +299,11 @@ def qvec2euler(qvec):
     return euler
 
 
-def invert_tvec(tvec):
-    #    R=qvec2rotmat(qvec)
-    #    R=np.transpose(R)
-    #    tvec_invert=-R*tvec
-    tvec_invert = np.array([-tvec[0], -tvec[1], tvec[2]])
+def invert_tvec(tvec, qvec):
+    R = qvec2rotmat(qvec)
+    R = R.T
+    tvec = -np.dot(R, tvec)
+    tvec_invert = np.array([tvec[0], tvec[1], tvec[2]])
     return tvec_invert
 
 
@@ -609,10 +609,17 @@ class GenerateCamera(Operator):
         camera_data = bpy.data.cameras.new(name="Camera")
         camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
         bpy.context.scene.collection.objects.link(camera_object)
+
+        #        don't know the exact pixel length(mm)
+        #        pixel_length =
+        #        camera_object.data.lens=intrinsic_param[0][0]*pixel_length
+        #        camera_object.data.shift_x=intrinsic_param[0][2]*pixel_length
+        #        camera_object.data.shift_y=intrinsic_param[0][3]*pixel_length
+
         idx = 1
         for i in sort_image_id:
             set_keyframe_(camera_object, qvec2euler(image_quaternion[i]),
-                          invert_tvec(image_translation[i]),
+                          invert_tvec(image_translation[i], image_quaternion[i]),
                           idx, 5)
             idx += 1
 
@@ -937,6 +944,7 @@ classes = (
     GenerateCamera
 )
 
+
 def register():
     from bpy.utils import register_class
     for cls in classes:
@@ -956,4 +964,3 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
