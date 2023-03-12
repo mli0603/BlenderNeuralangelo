@@ -291,6 +291,22 @@ def rotmat2qvec(R):
     return qvec
 
 
+def qvec2euler(qvec):
+    R = qvec2rotmat(qvec)
+    R = R.T
+    euler = np.array([-np.arctan2(R[2, 1], R[2, 2]), -np.arctan2(-R[2, 0], -np.sqrt(R[2, 1] ** 2 + R[2, 2] ** 2)),
+                      np.arctan2(R[1, 0], R[0, 0])])
+    return euler
+
+
+def invert_tvec(tvec):
+    #    R=qvec2rotmat(qvec)
+    #    R=np.transpose(R)
+    #    tvec_invert=-R*tvec
+    tvec_invert = np.array([-tvec[0], -tvec[1], tvec[2]])
+    return tvec_invert
+
+
 # ------------------------------------------------------------------------
 #    AddOn code:
 #    useful tutorial: https://blender.stackexchange.com/questions/57306/how-to-create-a-custom-ui
@@ -513,6 +529,14 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
+def set_keyframe_(obj, euler, tvec, idx, inter_frames):
+    obj.location = tvec
+    obj.rotation_euler = euler
+
+    obj.keyframe_insert(data_path='location', frame=idx * inter_frames)
+    obj.keyframe_insert(data_path='rotation_euler', frame=idx * inter_frames)
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -528,12 +552,12 @@ class MyProperties(PropertyGroup):
         maxlen=1024,
         subtype='DIR_PATH'
     )
-    box_slider: FloatVectorProperty(
+    box_slider: FloatVectorProperty(  # TODO: 'my_xxx' is a super bad naming convention
         name="Plane offset",
         subtype='TRANSLATION',
         description="X_min, X_max ,Y_min ,Y_max ,Z_min ,Z_max",
         size=6,
-        min=0,
+        min=0,  # TODO: can we do better than predefined values?
         max=20,
         default=(0, 0, 0, 0, 0, 0),
     )
@@ -564,6 +588,36 @@ class MyProperties(PropertyGroup):
 # ------------------------------------------------------------------------
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
+class GenerateCamera(Operator):
+    bl_label = "Generate camera"
+    bl_idname = "my.generate_camera"
+
+    def execute(self, context):
+        for obj in bpy.data.cameras:
+            bpy.data.cameras.remove(obj)
+
+        global colmap_data
+
+        intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
+        image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
+        image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
+        image_id = np.stack([img.name for img in colmap_data['images'].values()])
+
+        image_id_int = np.char.replace(image_id, '.jpg', '').astype(int)
+        sort_image_id = np.argsort(image_id_int)
+
+        camera_data = bpy.data.cameras.new(name="Camera")
+        camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
+        bpy.context.scene.collection.objects.link(camera_object)
+        idx = 1
+        for i in sort_image_id:
+            set_keyframe_(camera_object, qvec2euler(image_quaternion[i]),
+                          invert_tvec(image_translation[i]),
+                          idx, 5)
+            idx += 1
+
+        return {'FINISHED'}
+
 
 class OT_LoadCOLMAP(Operator):
     bl_label = "Load COLMAP Data"
@@ -572,10 +626,10 @@ class OT_LoadCOLMAP(Operator):
     def execute(self, context):
         scene = context.scene
         mytool = scene.my_tool
-
+        for obj in bpy.data.cameras:
+            bpy.data.cameras.remove(obj)
         for obj in bpy.context.scene.objects:
-            if obj.name != 'Camera':
-                bpy.data.meshes.remove(obj.data, do_unlink=True)
+            bpy.data.meshes.remove(obj.data, do_unlink=True)
 
         print("loading data")
 
@@ -592,6 +646,7 @@ class OT_LoadCOLMAP(Operator):
         colmap_data['points3D'] = points3D
 
         point_cloud_vertices = np.stack([point.xyz for point in points3D.values()])
+        print("TODO: set cropping planes location")
 
         generate_cropping_planes()
         reset_my_slider_to_default()
@@ -670,6 +725,7 @@ class Crop(Operator):
         for index in select_point_index[0]:
             bpy.data.objects['point cloud'].data.vertices[index].hide = False
 
+        # TODO: this can be directly retrieved
         if 'point cloud' in bpy.data.objects:
             obj = bpy.context.scene.objects['point cloud']
             bpy.context.view_layer.objects.active = obj
@@ -798,6 +854,7 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        # TODO: change transparency
 
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
@@ -856,6 +913,9 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout.separator()
 
         layout.operator("my.review_cloud")
+        layout.separator()
+
+        layout.operator("my.generate_camera")
 
 
 # ------------------------------------------------------------------------
@@ -873,7 +933,8 @@ classes = (
     BoundSphere,
     HideShowBox,
     HideShowSphere,
-    ReviewCloud
+    ReviewCloud,
+    GenerateCamera
 )
 
 
