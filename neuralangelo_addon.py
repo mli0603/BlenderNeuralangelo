@@ -291,6 +291,22 @@ def rotmat2qvec(R):
     return qvec
 
 
+def qvec2euler(qvec):
+    R = qvec2rotmat(qvec)
+    R = R.T
+    euler = np.array([-np.arctan2(R[2, 1], R[2, 2]), -np.arctan2(-R[2, 0], -np.sqrt(R[2, 1] ** 2 + R[2, 2] ** 2)),
+                      np.arctan2(R[1, 0], R[0, 0])])
+    return euler
+
+
+def invert_tvec(tvec, qvec):
+    R = qvec2rotmat(qvec)
+    R = R.T
+    tvec = -np.dot(R, tvec)
+    tvec_invert = np.array([tvec[0], tvec[1], tvec[2]])
+    return tvec_invert
+
+
 # ------------------------------------------------------------------------
 #    AddOn code:
 #    useful tutorial: https://blender.stackexchange.com/questions/57306/how-to-create-a-custom-ui
@@ -513,6 +529,14 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
+def set_keyframe_(obj, euler, tvec, idx, inter_frames):
+    obj.location = tvec
+    obj.rotation_euler = euler
+
+    obj.keyframe_insert(data_path='location', frame=idx * inter_frames)
+    obj.keyframe_insert(data_path='rotation_euler', frame=idx * inter_frames)
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -564,6 +588,43 @@ class MyProperties(PropertyGroup):
 # ------------------------------------------------------------------------
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
+class GenerateCamera(Operator):
+    bl_label = "Generate camera"
+    bl_idname = "addon.generate_camera"
+
+    def execute(self, context):
+        for obj in bpy.data.cameras:
+            bpy.data.cameras.remove(obj)
+
+        global colmap_data
+
+        intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
+        image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
+        image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
+        image_id = np.stack([img.name for img in colmap_data['images'].values()])
+
+        image_id_int = np.char.replace(image_id, '.jpg', '').astype(int)
+        sort_image_id = np.argsort(image_id_int)
+
+        camera_data = bpy.data.cameras.new(name="Camera")
+        camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
+        bpy.context.scene.collection.objects.link(camera_object)
+
+        #        don't know the exact pixel length(mm)
+        #        pixel_length =
+        #        camera_object.data.lens=intrinsic_param[0][0]*pixel_length
+        #        camera_object.data.shift_x=intrinsic_param[0][2]*pixel_length
+        #        camera_object.data.shift_y=intrinsic_param[0][3]*pixel_length
+
+        idx = 1
+        for i in sort_image_id:
+            set_keyframe_(camera_object, qvec2euler(image_quaternion[i]),
+                          invert_tvec(image_translation[i], image_quaternion[i]),
+                          idx, 5)
+            idx += 1
+
+        return {'FINISHED'}
+
 
 class LoadCOLMAP(Operator):
     '''
@@ -578,7 +639,7 @@ class LoadCOLMAP(Operator):
 
         # remove all objects
         for mesh in bpy.data.meshes:
-            bpy.data.meshes.remove(mesh)
+            bpy.data.meshes.remove(mesh, do_unlink=True)
         for camera in bpy.data.cameras:
             bpy.data.cameras.remove(camera)
         for light in bpy.data.lights:
@@ -816,7 +877,7 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
         layout.prop(mytool, "colmap_path")
         layout.operator("addon.load_colmap")
-        layout.operator("addon.debug")
+        # layout.operator("addon.debug")
         layout.separator()
 
 
@@ -861,6 +922,10 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout.separator()
 
         layout.operator("addon.review_cloud")
+        layout.operator("addon.review_cloud")
+        layout.separator()
+
+        layout.operator("addon.generate_camera")
 
 
 # ------------------------------------------------------------------------
@@ -877,9 +942,9 @@ classes = (
     BoundSphere,
     HideShowBox,
     HideShowSphere,
-    ReviewCloud
+    ReviewCloud,
+    GenerateCamera
 )
-
 
 def register():
     from bpy.utils import register_class
@@ -900,4 +965,3 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
