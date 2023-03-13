@@ -304,7 +304,7 @@ bl_info = {
     "location": "PROPERTIES",
     "warning": "",  # used for warning icon and text in addons panel
     "support": "COMMUNITY",
-    "category": "Render"
+    "category": "Interface"
 }
 
 import bpy
@@ -322,7 +322,7 @@ from bpy.types import (Panel,
                        PropertyGroup,
                        )
 
-# global variable for easier access
+# global variables for easier access
 colmap_data = {}
 old_box_offset = [0, 0, 0, 0, 0, 0]
 view_port = None
@@ -565,24 +565,28 @@ class MyProperties(PropertyGroup):
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
 
-class OT_LoadCOLMAP(Operator):
+class LoadCOLMAP(Operator):
+    '''
+    Load colmap data given file directory, setting up bounding box, set camera parameters and load images
+    '''
     bl_label = "Load COLMAP Data"
-    bl_idname = "my.load_colmap"
+    bl_idname = "addon.load_colmap"
 
     def execute(self, context):
         scene = context.scene
         mytool = scene.my_tool
 
-        for obj in bpy.context.scene.objects:
-            if obj.name != 'Camera':
-                bpy.data.meshes.remove(obj.data, do_unlink=True)
+        # remove all objects
+        for mesh in bpy.data.meshes:
+            bpy.data.meshes.remove(mesh)
+        for camera in bpy.data.cameras:
+            bpy.data.cameras.remove(camera)
+        for light in bpy.data.lights:
+            bpy.data.lights.remove(light)
 
-        print("loading data")
-
+        # load data
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
-
-        print("store colmap data")
 
         global colmap_data
         global point_cloud_vertices
@@ -593,6 +597,7 @@ class OT_LoadCOLMAP(Operator):
 
         point_cloud_vertices = np.stack([point.xyz for point in points3D.values()])
 
+        # generate bounding boxes for cropping
         generate_cropping_planes()
         reset_my_slider_to_default()
 
@@ -605,23 +610,23 @@ class OT_LoadCOLMAP(Operator):
         return {'FINISHED'}
 
 
-class OT_Debug(Operator):
-    '''
-    for easier debugging experience
-    '''
+#class OT_Debug(Operator):
+#    '''
+#    for easier debugging experience
+#    '''
 
-    bl_label = "Debug"
-    bl_idname = "my.debug"
+#    bl_label = "Debug"
+#    bl_idname = "addon.debug"
 
-    def execute(self, context):
-        scene = context.scene
-        mytool = scene.my_tool
+#    def execute(self, context):
+#        scene = context.scene
+#        mytool = scene.my_tool
 
-        print(len(colmap_data['cameras'].keys()))
-        print(len(colmap_data['images'].keys()))
-        print(len(colmap_data['points3D'].keys()))
+#        print(len(colmap_data['cameras'].keys()))
+#        print(len(colmap_data['images'].keys()))
+#        print(len(colmap_data['points3D'].keys()))
 
-        return {'FINISHED'}
+#        return {'FINISHED'}
 
 
 class Crop(Operator):
@@ -634,7 +639,7 @@ class Crop(Operator):
     '''
 
     bl_label = "Crop Pointcloud"
-    bl_idname = "my.crop"
+    bl_idname = "addon.crop"
 
     def execute(self, context):
         if bpy.context.active_object.mode == 'EDIT':
@@ -684,7 +689,7 @@ class BoundSphere(Operator):
     '''
 
     bl_label = "Create Bounding Sphere"
-    bl_idname = "my.add_bound_sphere"
+    bl_idname = "addon.add_bound_sphere"
 
     def execute(self, context):
         global point_cloud_vertices
@@ -755,7 +760,7 @@ class BoundSphere(Operator):
 
 class HideShowBox(Operator):
     bl_label = "Hide/Show Bounding Box"
-    bl_idname = "my.hide_show_box"
+    bl_idname = "addon.hide_show_box"
 
     def execute(self, context):
         status = bpy.context.scene.objects['cropping plane'].hide_get()
@@ -765,7 +770,7 @@ class HideShowBox(Operator):
 
 class HideShowSphere(Operator):
     bl_label = "Hide/Show Bounding Sphere"
-    bl_idname = "my.hide_show_sphere"
+    bl_idname = "addon.hide_show_sphere"
 
     def execute(self, context):
         status = bpy.context.scene.objects['Bounding Sphere'].hide_get()
@@ -775,7 +780,7 @@ class HideShowSphere(Operator):
 
 class ReviewCloud(Operator):
     bl_label = "Review\Hide Point Cloud"
-    bl_idname = "my.review_cloud"
+    bl_idname = "addon.review_cloud"
 
     def execute(self, context):
         bpy.ops.object.editmode_toggle()
@@ -810,8 +815,8 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         mytool = scene.my_tool
 
         layout.prop(mytool, "colmap_path")
-        layout.operator("my.load_colmap")
-        layout.operator("my.debug")
+        layout.operator("addon.load_colmap")
+        layout.operator("addon.debug")
         layout.separator()
 
 
@@ -835,8 +840,8 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         sub.enabled = mytool.transparency_toggle
         layout.separator()
 
-        layout.row().operator("my.hide_show_box")
-        layout.row().operator("my.crop")
+        layout.row().operator("addon.hide_show_box")
+        layout.row().operator("addon.crop")
 
         x_row = layout.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
@@ -851,11 +856,11 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         z_row.prop(mytool, "box_slider", index=5, slider=True, text='Z max')
         layout.separator()
 
-        layout.operator("my.add_bound_sphere")
-        layout.row().operator("my.hide_show_sphere")
+        layout.operator("addon.add_bound_sphere")
+        layout.row().operator("addon.hide_show_sphere")
         layout.separator()
 
-        layout.operator("my.review_cloud")
+        layout.operator("addon.review_cloud")
 
 
 # ------------------------------------------------------------------------
@@ -864,8 +869,7 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
 classes = (
     MyProperties,
-    OT_LoadCOLMAP,
-    OT_Debug,
+    LoadCOLMAP,
     MainPanel,
     LoadingPanel,
     BoundingPanel,
