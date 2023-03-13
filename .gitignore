@@ -2,3 +2,5 @@ toy_example.MOV
 toy_example_skip30/images/
 toy_example_skip30/preprocess/
 *.blend1
+.idea
+__pycache__

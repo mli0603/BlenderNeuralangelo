@@ -2,11 +2,11 @@
 #    COLMAP code: https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
 # ------------------------------------------------------------------------
 
-import os
 import collections
-import numpy as np
+import os
 import struct
-import argparse
+
+import numpy as np
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
@@ -326,15 +326,11 @@ bl_info = {
 import bpy
 from bpy.props import (StringProperty,
                        BoolProperty,
-                       IntProperty,
                        FloatProperty,
                        FloatVectorProperty,
-                       EnumProperty,
                        PointerProperty,
                        )
-from bpy.types import (Panel,
-                       Menu,
-                       Operator,
+from bpy.types import (Operator,
                        PropertyGroup,
                        )
 
@@ -508,6 +504,7 @@ def delete_bounding_sphere():
 
 
 # TODO: can this be cleaned up??
+# TODO: when loading, not set to solid mode??
 def switch_viewport_to_solid(self, context):
     toggle = context.scene.my_tool.transparency_toggle
     #    view_port.shading.type='SOLID'
@@ -529,7 +526,7 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe_(obj, euler, tvec, idx, inter_frames):
+def set_keyframe(obj, euler, tvec, idx, inter_frames):
     obj.location = tvec
     obj.rotation_euler = euler
 
@@ -598,7 +595,11 @@ class GenerateCamera(Operator):
 
         global colmap_data
 
+        # TODO: intrinsics not set
+        # https://dlr-rm.github.io/BlenderProc/docs/tutorials/camera.html
+        # https://github.com/DLR-RM/BlenderProc
         intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
+
         image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
         image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
         image_id = np.stack([img.name for img in colmap_data['images'].values()])
@@ -618,9 +619,9 @@ class GenerateCamera(Operator):
 
         idx = 1
         for i in sort_image_id:
-            set_keyframe_(camera_object, qvec2euler(image_quaternion[i]),
-                          invert_tvec(image_translation[i], image_quaternion[i]),
-                          idx, 5)
+            set_keyframe(camera_object, qvec2euler(image_quaternion[i]),
+                         invert_tvec(image_translation[i], image_quaternion[i]),
+                         idx, 5)
             idx += 1
 
         return {'FINISHED'}
@@ -671,7 +672,7 @@ class LoadCOLMAP(Operator):
         return {'FINISHED'}
 
 
-#class OT_Debug(Operator):
+# class OT_Debug(Operator):
 #    '''
 #    for easier debugging experience
 #    '''
@@ -776,9 +777,12 @@ class BoundSphere(Operator):
         center_y = (y_min + y_max) / 2
         center_z = (z_min + z_max) / 2
 
+        # TODO: clean up
         Radius = max(np.sqrt((unhide_verts[i, 0] - center_x) ** 2 + (unhide_verts[i, 1] - center_y) ** 2 + (
-                    unhide_verts[i, 2] - center_z) ** 2) for i in
+                unhide_verts[i, 2] - center_z) ** 2) for i in
                      range(np.shape(unhide_verts)[0]))
+        # Radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
+        #         unhide_verts[:, 2] - center_z) ** 2))  # N
         center = (center_x, center_y, center_z)
 
         num_segments = 128
@@ -902,7 +906,6 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout.separator()
 
         layout.row().operator("addon.hide_show_box")
-        layout.row().operator("addon.crop")
 
         x_row = layout.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
@@ -915,6 +918,8 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         z_row = layout.row()
         z_row.prop(mytool, "box_slider", index=4, slider=True, text='Z min')
         z_row.prop(mytool, "box_slider", index=5, slider=True, text='Z max')
+
+        layout.row().operator("addon.crop")
         layout.separator()
 
         layout.operator("addon.add_bound_sphere")
@@ -945,6 +950,7 @@ classes = (
     ReviewCloud,
     GenerateCamera
 )
+
 
 def register():
     from bpy.utils import register_class
