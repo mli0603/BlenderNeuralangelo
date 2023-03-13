@@ -894,38 +894,47 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout = self.layout
         mytool = scene.my_tool
 
-        row = layout.row()
+        box = layout.box()
+        row = box.row()
         row.alignment = 'CENTER'
         row.label(text="Edit bounding box")
 
-        row = layout.row(align=True)
+        row = box.row(align=True)
         row.prop(mytool, "transparency_toggle")
         sub = row.row()
         sub.prop(mytool, "transparency_slider", slider=True, text='Transparency')
         sub.enabled = mytool.transparency_toggle
-        layout.separator()
+        box.separator()
 
-        layout.row().operator("addon.hide_show_box")
-
-        x_row = layout.row()
+        x_row = box.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
         x_row.prop(mytool, "box_slider", index=1, slider=True, text='X max')
 
-        y_row = layout.row()
+        y_row = box.row()
         y_row.prop(mytool, "box_slider", index=2, slider=True, text='Y min')
         y_row.prop(mytool, "box_slider", index=3, slider=True, text='Y max')
 
-        z_row = layout.row()
+        z_row = box.row()
         z_row.prop(mytool, "box_slider", index=4, slider=True, text='Z min')
         z_row.prop(mytool, "box_slider", index=5, slider=True, text='Z max')
 
-        layout.row().operator("addon.crop")
+        box.separator()
+        row = box.row()
+        row.operator("addon.hide_show_box")
+        row.operator("addon.crop")
+        
         layout.separator()
+        
+        
+        box = layout.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="Create bounding sphere")
+        row = box.row()
+        row.operator("addon.add_bound_sphere")
+        row.operator("addon.hide_show_sphere")
 
-        layout.operator("addon.add_bound_sphere")
-        layout.row().operator("addon.hide_show_sphere")
-        layout.separator()
-
+        # TODO: what are these?
         layout.operator("addon.review_cloud")
         layout.operator("addon.review_cloud")
         layout.separator()
