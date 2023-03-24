@@ -1096,7 +1096,6 @@ class BoundSphere(Operator):
 
         return {'FINISHED'}
 
-
 class HideShowBox(Operator):
     bl_label = "Hide/Show Bounding Box"
     bl_idname = "addon.hide_show_box"
