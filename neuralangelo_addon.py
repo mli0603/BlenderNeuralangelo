@@ -5,8 +5,11 @@
 import collections
 import os
 import struct
-
+import bpy
 import numpy as np
+
+from typing import Union, Tuple, Optional, List
+from mathutils import Matrix, Vector, Euler
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
@@ -291,20 +294,166 @@ def rotmat2qvec(R):
     return qvec
 
 
-def qvec2euler(qvec):
-    R = qvec2rotmat(qvec)
-    R = R.T
-    euler = np.array([-np.arctan2(R[2, 1], R[2, 2]), -np.arctan2(-R[2, 0], -np.sqrt(R[2, 1] ** 2 + R[2, 2] ** 2)),
-                      np.arctan2(R[1, 0], R[0, 0])])
-    return euler
-
-
 def invert_tvec(tvec, qvec):
     R = qvec2rotmat(qvec)
     R = R.T
     tvec = -np.dot(R, tvec)
     tvec_invert = np.array([tvec[0], tvec[1], tvec[2]])
     return tvec_invert
+
+
+# ------------------------------------------------------------------------
+#    Borrowed from BlenderProc:
+#    https://github.com/DLR-RM/BlenderProc
+# ------------------------------------------------------------------------
+def set_intrinsics_from_K_matrix(K: Union[np.ndarray, Matrix], image_width: int, image_height: int,
+                                 clip_start: float = None, clip_end: float = None):
+    """ Set the camera intrinsics via a K matrix.
+    The K matrix should have the format:
+        [[fx, 0, cx],
+         [0, fy, cy],
+         [0, 0,  1]]
+    This method is based on https://blender.stackexchange.com/a/120063.
+    :param K: The 3x3 K matrix.
+    :param image_width: The image width in pixels.
+    :param image_height: The image height in pixels.
+    :param clip_start: Clipping start.
+    :param clip_end: Clipping end.
+    """
+
+    K = Matrix(K)
+
+    cam = bpy.context.scene.objects['Camera'].data
+
+    if abs(K[0][1]) > 1e-7:
+        raise ValueError(f"Skew is not supported by blender and therefore "
+                         f"not by BlenderProc, set this to zero: {K[0][1]} and recalibrate")
+
+    fx, fy = K[0][0], K[1][1]
+    cx, cy = K[0][2], K[1][2]
+
+    # If fx!=fy change pixel aspect ratio
+    pixel_aspect_x = pixel_aspect_y = 1
+    if fx > fy:
+        pixel_aspect_y = fx / fy
+    elif fx < fy:
+        pixel_aspect_x = fy / fx
+
+    # Compute sensor size in mm and view in px
+    pixel_aspect_ratio = pixel_aspect_y / pixel_aspect_x
+    view_fac_in_px = get_view_fac_in_px(cam, pixel_aspect_x, pixel_aspect_y, image_width, image_height)
+    sensor_size_in_mm = get_sensor_size(cam)
+
+    # Convert focal length in px to focal length in mm
+    f_in_mm = fx * sensor_size_in_mm / view_fac_in_px
+
+    # Convert principal point in px to blenders internal format
+    shift_x = (cx - (image_width - 1) / 2) / -view_fac_in_px
+    shift_y = (cy - (image_height - 1) / 2) / view_fac_in_px * pixel_aspect_ratio
+
+    # Finally set all intrinsics
+    set_intrinsics_from_blender_params(f_in_mm, image_width, image_height, clip_start, clip_end, pixel_aspect_x,
+                                       pixel_aspect_y, shift_x, shift_y, "MILLIMETERS")
+
+
+def get_sensor_size(cam: bpy.types.Camera) -> float:
+    """ Returns the sensor size in millimeters based on the configured sensor_fit.
+    :param cam: The camera object.
+    :return: The sensor size in millimeters.
+    """
+    if cam.sensor_fit == 'VERTICAL':
+        sensor_size_in_mm = cam.sensor_height
+    else:
+        sensor_size_in_mm = cam.sensor_width
+    return sensor_size_in_mm
+
+
+def get_view_fac_in_px(cam: bpy.types.Camera, pixel_aspect_x: float, pixel_aspect_y: float,
+                       resolution_x_in_px: int, resolution_y_in_px: int) -> int:
+    """ Returns the camera view in pixels.
+    :param cam: The camera object.
+    :param pixel_aspect_x: The pixel aspect ratio along x.
+    :param pixel_aspect_y: The pixel aspect ratio along y.
+    :param resolution_x_in_px: The image width in pixels.
+    :param resolution_y_in_px: The image height in pixels.
+    :return: The camera view in pixels.
+    """
+    # Determine the sensor fit mode to use
+    if cam.sensor_fit == 'AUTO':
+        if pixel_aspect_x * resolution_x_in_px >= pixel_aspect_y * resolution_y_in_px:
+            sensor_fit = 'HORIZONTAL'
+        else:
+            sensor_fit = 'VERTICAL'
+    else:
+        sensor_fit = cam.sensor_fit
+
+    # Based on the sensor fit mode, determine the view in pixels
+    pixel_aspect_ratio = pixel_aspect_y / pixel_aspect_x
+    if sensor_fit == 'HORIZONTAL':
+        view_fac_in_px = resolution_x_in_px
+    else:
+        view_fac_in_px = pixel_aspect_ratio * resolution_y_in_px
+
+    return view_fac_in_px
+
+
+def set_intrinsics_from_blender_params(lens: float = None, image_width: int = None, image_height: int = None,
+                                       clip_start: float = None, clip_end: float = None,
+                                       pixel_aspect_x: float = None, pixel_aspect_y: float = None, shift_x: int = None,
+                                       shift_y: int = None, lens_unit: str = None):
+    """ Sets the camera intrinsics using blenders represenation.
+    :param lens: Either the focal length in millimeters or the FOV in radians, depending on the given lens_unit.
+    :param image_width: The image width in pixels.
+    :param image_height: The image height in pixels.
+    :param clip_start: Clipping start.
+    :param clip_end: Clipping end.
+    :param pixel_aspect_x: The pixel aspect ratio along x.
+    :param pixel_aspect_y: The pixel aspect ratio along y.
+    :param shift_x: The shift in x direction.
+    :param shift_y: The shift in y direction.
+    :param lens_unit: Either FOV or MILLIMETERS depending on whether the lens is defined as focal length in
+                      millimeters or as FOV in radians.
+    """
+
+    cam = bpy.context.scene.objects['Camera'].data
+
+    if lens_unit is not None:
+        cam.lens_unit = lens_unit
+
+    if lens is not None:
+        # Set focal length
+        if cam.lens_unit == 'MILLIMETERS':
+            if lens < 1:
+                raise Exception("The focal length is smaller than 1mm which is not allowed in blender: " + str(lens))
+            cam.lens = lens
+        elif cam.lens_unit == "FOV":
+            cam.angle = lens
+        else:
+            raise Exception("No such lens unit: " + lens_unit)
+
+    # Set resolution
+    if image_width is not None:
+        bpy.context.scene.render.resolution_x = image_width
+    if image_height is not None:
+        bpy.context.scene.render.resolution_y = image_height
+
+    # Set clipping
+    if clip_start is not None:
+        cam.clip_start = clip_start
+    if clip_end is not None:
+        cam.clip_end = clip_end
+
+    # Set aspect ratio
+    if pixel_aspect_x is not None:
+        bpy.context.scene.render.pixel_aspect_x = pixel_aspect_x
+    if pixel_aspect_y is not None:
+        bpy.context.scene.render.pixel_aspect_y = pixel_aspect_y
+
+    # Set shift
+    if shift_x is not None:
+        cam.shift_x = shift_x
+    if shift_y is not None:
+        cam.shift_y = shift_y
 
 
 # ------------------------------------------------------------------------
@@ -323,7 +472,6 @@ bl_info = {
     "category": "Interface"
 }
 
-import bpy
 from bpy.props import (StringProperty,
                        BoolProperty,
                        FloatProperty,
@@ -373,6 +521,57 @@ def display_pointcloud(points3D):
     mesh.validate()
 
 
+def generate_camera_plane(qvec, tvec, camera, image_width, image_height):
+    if 'camera plane' in bpy.data.objects:
+        obj = bpy.context.scene.objects['camera plane']
+        bpy.data.meshes.remove(obj.data, do_unlink=True)
+
+    qvec[0:3] *= -1
+    camera.location = tvec
+    camera.rotation_quaternion = np.roll(qvec, 1)
+
+    bpy.context.view_layer.update()
+
+    world2camera = camera.matrix_world
+    camera_vert_origin = camera.data.view_frame()
+
+    trans_ratio = image_width / image_height
+    for vert in camera_vert_origin:
+        vert[0] *= trans_ratio
+
+    verts = camera_vert_origin
+
+    faces = [[0, 1, 2, 3]]
+    msh = bpy.data.meshes.new("camera plane")
+    msh.from_pydata(verts, [], faces)
+    obj = bpy.data.objects.new("camera plane", msh)
+    bpy.context.scene.collection.objects.link(obj)
+
+    plane = bpy.context.scene.objects['camera plane']
+
+    if 'Image Material' not in bpy.data.materials:
+        material = bpy.data.materials.new(name="Image Material")
+    else:
+        material = bpy.data.materials["Image Material"]
+
+    if len(plane.material_slots) == 0:
+        plane.data.materials.append(material)
+
+    material = plane.active_material
+    material.use_nodes = True
+
+    image_texture = material.node_tree.nodes.new(type='ShaderNodeTexImage')
+    principled_bsdf = material.node_tree.nodes.get('Principled BSDF')
+    material.node_tree.links.new(image_texture.outputs['Color'], principled_bsdf.inputs['Base Color'])
+
+    plane = bpy.context.scene.objects['camera plane']
+    bpy.context.view_layer.objects.active = plane
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+
 def generate_cropping_planes():
     global point_cloud_vertices
 
@@ -410,7 +609,7 @@ def generate_cropping_planes():
     return
 
 
-def update_cropping_plane(scene, depsgraph):
+def update_cropping_plane(scene):
     global old_box_offset
     global point_cloud_vertices
 
@@ -526,12 +725,34 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe(obj, euler, tvec, idx, inter_frames):
+def set_keyframe(obj, qvec, tvec, idx, inter_frames, plane, image_width, image_height):
+    qvec[0:3] *= -1
     obj.location = tvec
-    obj.rotation_euler = euler
+    obj.rotation_quaternion = np.roll(qvec, 1)
 
     obj.keyframe_insert(data_path='location', frame=idx * inter_frames)
-    obj.keyframe_insert(data_path='rotation_euler', frame=idx * inter_frames)
+    obj.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
+
+    bpy.context.view_layer.update()
+
+    world2camera = obj.matrix_world
+    camera_vert_origin = obj.data.view_frame()
+
+    trans_ratio = image_width / image_height
+    for vert in camera_vert_origin:
+        vert[0] *= trans_ratio
+
+    camera_verts = [world2camera @ v for v in camera_vert_origin]
+    plane_verts = plane.data.vertices
+
+    for i in range(4):
+        plane_verts[i].co = camera_verts[i]
+        plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
+
+    material = plane.material_slots[0].material
+    texture = material.node_tree.nodes.get("Image Texture")
+    texture.image_user.frame_offset = idx - 1
+    texture.image_user.keyframe_insert(data_path="frame_offset", frame=idx * inter_frames)
 
 
 # ------------------------------------------------------------------------
@@ -592,6 +813,10 @@ class GenerateCamera(Operator):
     def execute(self, context):
         for obj in bpy.data.cameras:
             bpy.data.cameras.remove(obj)
+        for material in bpy.data.materials:
+            bpy.data.materials.remove(material, do_unlink=True)
+        #        for image in bpy.data.images:
+        #            bpy.data.images.remove(image, do_unlink=True)
 
         global colmap_data
 
@@ -599,7 +824,11 @@ class GenerateCamera(Operator):
         # https://dlr-rm.github.io/BlenderProc/docs/tutorials/camera.html
         # https://github.com/DLR-RM/BlenderProc
         intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
-
+        intrinsic_matrix = [[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
+                            [0, intrinsic_param[0][1], intrinsic_param[0][3]],
+                            [0, 0, 1]]
+        image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
+        image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
         image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
         image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
         image_id = np.stack([img.name for img in colmap_data['images'].values()])
@@ -607,22 +836,67 @@ class GenerateCamera(Operator):
         image_id_int = np.char.replace(image_id, '.jpg', '').astype(int)
         sort_image_id = np.argsort(image_id_int)
 
+        image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
+
+        file_name = []
+        for image in os.listdir(image_folder_path):
+            file_name.append({'name': image})
+
+        #        image_sample=bpy.data.images.load(os.path.join(image_folder_path,os.listdir(image_folder_path)[-1]))
+
+        bpy.ops.image.open(filepath=image_folder_path,
+                           directory=image_folder_path,
+                           files=file_name,
+                           relative_path=True, show_multiview=False)
+        bpy.ops.image.open(filepath=image_folder_path,
+                           directory=image_folder_path,
+                           files=file_name,
+                           relative_path=True, show_multiview=False)
+        image_sequence = bpy.data.images[0]
+        image_sequence.source = 'SEQUENCE'
+
         camera_data = bpy.data.cameras.new(name="Camera")
         camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
         bpy.context.scene.collection.objects.link(camera_object)
+        bpy.data.objects['Camera'].rotation_mode = 'QUATERNION'
 
-        #        don't know the exact pixel length(mm)
-        #        pixel_length =
-        #        camera_object.data.lens=intrinsic_param[0][0]*pixel_length
-        #        camera_object.data.shift_x=intrinsic_param[0][2]*pixel_length
-        #        camera_object.data.shift_y=intrinsic_param[0][3]*pixel_length
+        set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]), int(image_height[0]))
+
+        camera = bpy.context.scene.objects['Camera']
+
+        generate_camera_plane(image_quaternion[0], invert_tvec(image_translation[0], image_quaternion[0]), camera,
+                              int(image_width[0]), int(image_height[0]))
+
+        plane = bpy.context.scene.objects['camera plane']
+
+        plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_auto_refresh = True
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_duration = 1
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
 
         idx = 1
         for i in sort_image_id:
-            set_keyframe(camera_object, qvec2euler(image_quaternion[i]),
+            set_keyframe(camera, image_quaternion[i],
                          invert_tvec(image_translation[i], image_quaternion[i]),
-                         idx, 5)
+                         idx, 5, plane, int(image_width[0]), int(image_height[0]))
             idx += 1
+
+        '''
+        bug: If run the following program in python console, the image will successfully attach to the camera plane, 
+             but if run them in python script, only part of the image will attach to the plane. 
+
+             Maybe this is because the difference of context environment in console and script.
+
+             Once this situation happen, run the 'Generate camera' operator again solve the error(don't know why).
+        '''
+        plane = bpy.context.scene.objects['camera plane']
+        bpy.context.view_layer.objects.active = plane
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
+        bpy.ops.object.mode_set(mode='OBJECT')
 
         return {'FINISHED'}
 
@@ -645,7 +919,10 @@ class LoadCOLMAP(Operator):
             bpy.data.cameras.remove(camera)
         for light in bpy.data.lights:
             bpy.data.lights.remove(light)
-
+        for material in bpy.data.materials:
+            bpy.data.materials.remove(material, do_unlink=True)
+        for image in bpy.data.images:
+            bpy.data.images.remove(image, do_unlink=True)
         # load data
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
@@ -662,7 +939,7 @@ class LoadCOLMAP(Operator):
         # generate bounding boxes for cropping
         generate_cropping_planes()
         reset_my_slider_to_default()
-
+        update_cropping_plane(bpy.context.scene)
         print("TODO: set camera intrinsics")
 
         print("TODO: set camera poses")
@@ -778,11 +1055,8 @@ class BoundSphere(Operator):
         center_z = (z_min + z_max) / 2
 
         # TODO: clean up
-        Radius = max(np.sqrt((unhide_verts[i, 0] - center_x) ** 2 + (unhide_verts[i, 1] - center_y) ** 2 + (
-                unhide_verts[i, 2] - center_z) ** 2) for i in
-                     range(np.shape(unhide_verts)[0]))
-        # Radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
-        #         unhide_verts[:, 2] - center_z) ** 2))  # N
+        Radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
+                unhide_verts[:, 2] - center_z) ** 2))
         center = (center_x, center_y, center_z)
 
         num_segments = 128
@@ -822,7 +1096,6 @@ class BoundSphere(Operator):
 
         return {'FINISHED'}
 
-
 class HideShowBox(Operator):
     bl_label = "Hide/Show Bounding Box"
     bl_idname = "addon.hide_show_box"
@@ -843,8 +1116,8 @@ class HideShowSphere(Operator):
         return {'FINISHED'}
 
 
-class ReviewCloud(Operator):
-    bl_label = "Review\Hide Point Cloud"
+class DisplayCloud(Operator):
+    bl_label = "Display\Hide Point Cloud"
     bl_idname = "addon.review_cloud"
 
     def execute(self, context):
@@ -922,10 +1195,9 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.operator("addon.hide_show_box")
         row.operator("addon.crop")
-        
+
         layout.separator()
-        
-        
+
         box = layout.box()
         row = box.row()
         row.alignment = 'CENTER'
@@ -935,7 +1207,6 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row.operator("addon.hide_show_sphere")
 
         # TODO: what are these?
-        layout.operator("addon.review_cloud")
         layout.operator("addon.review_cloud")
         layout.separator()
 
@@ -956,8 +1227,8 @@ classes = (
     BoundSphere,
     HideShowBox,
     HideShowSphere,
-    ReviewCloud,
-    GenerateCamera
+    DisplayCloud,
+    GenerateCamera,
 )
 
 
@@ -980,3 +1251,4 @@ def unregister():
 
 if __name__ == "__main__":
     register()
+
