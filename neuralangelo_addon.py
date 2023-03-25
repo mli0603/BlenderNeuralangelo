@@ -897,6 +897,11 @@ class GenerateCamera(Operator):
         bpy.ops.mesh.select_all(action='SELECT')
         bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
         bpy.ops.object.mode_set(mode='OBJECT')
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space.shading.color_type = 'TEXTURE'
 
         return {'FINISHED'}
 
@@ -1096,6 +1101,7 @@ class BoundSphere(Operator):
 
         return {'FINISHED'}
 
+
 class HideShowBox(Operator):
     bl_label = "Hide/Show Bounding Box"
     bl_idname = "addon.hide_show_box"
@@ -1251,4 +1257,3 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
