@@ -726,6 +726,7 @@ def update_transparency(self, context):
 
 
 def set_keyframe(obj, qvec, tvec, idx, inter_frames, plane, image_width, image_height):
+    print(inter_frames)
     qvec[0:3] *= -1
     obj.location = tvec
     obj.rotation_quaternion = np.roll(qvec, 1)
@@ -795,20 +796,12 @@ class MyProperties(PropertyGroup):
     )
 
 
-#    for area in bpy.context.screen.areas:
-#        if area.type == 'VIEW_3D':
-#            for space in area.spaces:
-#                if space.type == 'VIEW_3D':
-#                    global view_port
-#                    view_port = space
-
-
 # ------------------------------------------------------------------------
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
-class GenerateCamera(Operator):
-    bl_label = "Generate camera"
-    bl_idname = "addon.generate_camera"
+class LoadCamera(Operator):
+    bl_label = "Load Poses and Images"
+    bl_idname = "addon.load_camera"
 
     def execute(self, context):
         for obj in bpy.data.cameras:
@@ -827,6 +820,7 @@ class GenerateCamera(Operator):
         intrinsic_matrix = [[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
                             [0, intrinsic_param[0][1], intrinsic_param[0][3]],
                             [0, 0, 1]]
+        print(intrinsic_matrix)
         image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
         image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
         image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
@@ -880,7 +874,7 @@ class GenerateCamera(Operator):
         for i in sort_image_id:
             set_keyframe(camera, image_quaternion[i],
                          invert_tvec(image_translation[i], image_quaternion[i]),
-                         idx, 5, plane, int(image_width[0]), int(image_height[0]))
+                         idx, 1, plane, int(image_width[0]), int(image_height[0]))
             idx += 1
 
         '''
@@ -952,25 +946,6 @@ class LoadCOLMAP(Operator):
         print("TODO: load images")
 
         return {'FINISHED'}
-
-
-# class OT_Debug(Operator):
-#    '''
-#    for easier debugging experience
-#    '''
-
-#    bl_label = "Debug"
-#    bl_idname = "addon.debug"
-
-#    def execute(self, context):
-#        scene = context.scene
-#        mytool = scene.my_tool
-
-#        print(len(colmap_data['cameras'].keys()))
-#        print(len(colmap_data['images'].keys()))
-#        print(len(colmap_data['points3D'].keys()))
-
-#        return {'FINISHED'}
 
 
 class Crop(Operator):
@@ -1131,6 +1106,23 @@ class DisplayCloud(Operator):
         return {'FINISHED'}
 
 
+class HideShowCameraPlane(Operator):
+    bl_label = "Hide/Show Camera Plane"
+    bl_idname = "addon.hide_show_cam_plane"
+
+    def execute(self, context):
+        status = bpy.context.scene.objects['camera plane'].hide_get()
+        bpy.context.scene.objects['camera plane'].hide_set(not status)
+        return {'FINISHED'}
+
+class ExportSceneParameters(Operator):
+    bl_label = "Export Scene Parameters"
+    bl_idname = "addon.export_scene_param"
+
+    def execute(self, context):
+        # TODO: write to json
+        return {'FINISHED'}
+    
 # ------------------------------------------------------------------------
 #    Panel
 # ------------------------------------------------------------------------
@@ -1146,8 +1138,18 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_label = "Neuralangelo Addon"
 
     def draw(self, context):
+        scene = context.scene
         layout = self.layout
-
+        mytool = scene.my_tool
+        
+        row = layout.row(align=True)
+        row.prop(mytool, "transparency_toggle")
+        sub = row.row()
+        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency of Objects')
+        sub.enabled = mytool.transparency_toggle
+        
+        layout.row().operator('addon.export_scene_param')
+        
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_parent_id = "panel_main"
@@ -1160,7 +1162,6 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
         layout.prop(mytool, "colmap_path")
         layout.operator("addon.load_colmap")
-        # layout.operator("addon.debug")
         layout.separator()
 
 
@@ -1177,13 +1178,6 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.alignment = 'CENTER'
         row.label(text="Edit bounding box")
-
-        row = box.row(align=True)
-        row.prop(mytool, "transparency_toggle")
-        sub = row.row()
-        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency')
-        sub.enabled = mytool.transparency_toggle
-        box.separator()
 
         x_row = box.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
@@ -1214,10 +1208,18 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
         # TODO: what are these?
         layout.operator("addon.review_cloud")
-        layout.separator()
 
-        layout.operator("addon.generate_camera")
+class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id = "panel_main"
+    bl_label = "Inspect Camera Poses"
 
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        mytool = scene.my_tool
+
+        layout.operator("addon.load_camera")
+        layout.operator("addon.hide_show_cam_plane")
 
 # ------------------------------------------------------------------------
 #    Registration
@@ -1229,12 +1231,15 @@ classes = (
     MainPanel,
     LoadingPanel,
     BoundingPanel,
+    CameraPanel,
     Crop,
     BoundSphere,
     HideShowBox,
     HideShowSphere,
     DisplayCloud,
-    GenerateCamera,
+    LoadCamera,
+    HideShowCameraPlane,
+    ExportSceneParameters
 )
 
 
