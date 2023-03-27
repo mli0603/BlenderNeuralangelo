@@ -734,7 +734,7 @@ def set_keyframe(camera, qvec, tvec, idx, inter_frames, plane, image_width, imag
     camera.keyframe_insert(data_path='location', frame=idx * inter_frames)
     camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
 
-    # Set vertices of Camera plane in eahc frame
+    # Set vertices of Camera plane in each frame
     bpy.context.view_layer.update()
 
     world2camera = camera.matrix_world
@@ -753,7 +753,7 @@ def set_keyframe(camera, qvec, tvec, idx, inter_frames, plane, image_width, imag
         plane_verts[i].co = camera_verts[i]
         plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
 
-    # Set image texture of Camera plane in eahc frame
+    # Set image texture of Camera plane in each frame
     material = plane.material_slots[0].material
     texture = material.node_tree.nodes.get("Image Texture")
     texture.image_user.frame_offset = idx - 1
