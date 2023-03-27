@@ -725,22 +725,26 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe(obj, qvec, tvec, idx, inter_frames, plane, image_width, image_height):
+def set_keyframe(camera, qvec, tvec, idx, inter_frames, plane, image_width, image_height):
+    # Set rotation and translation of Camera in each frame
     qvec[0:3] *= -1
-    obj.location = tvec
-    obj.rotation_quaternion = np.roll(qvec, 1)
+    camera.location = tvec
+    camera.rotation_quaternion = np.roll(qvec, 1)
 
-    obj.keyframe_insert(data_path='location', frame=idx * inter_frames)
-    obj.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
+    camera.keyframe_insert(data_path='location', frame=idx * inter_frames)
+    camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
 
+    # Set vertices of Camera plane in eahc frame
     bpy.context.view_layer.update()
 
-    world2camera = obj.matrix_world
-    camera_vert_origin = obj.data.view_frame()
+    world2camera = camera.matrix_world
+    camera_vert_origin = camera.data.view_frame()
 
     trans_ratio = image_width / image_height
+
     for vert in camera_vert_origin:
-        vert[0] *= trans_ratio
+        vert[1] /= trans_ratio  # BIG PLANE
+        # vert[0] *= trans_ratio   #SMALL PLANE
 
     camera_verts = [world2camera @ v for v in camera_vert_origin]
     plane_verts = plane.data.vertices
@@ -749,6 +753,7 @@ def set_keyframe(obj, qvec, tvec, idx, inter_frames, plane, image_width, image_h
         plane_verts[i].co = camera_verts[i]
         plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
 
+    # Set image texture of Camera plane in eahc frame
     material = plane.material_slots[0].material
     texture = material.node_tree.nodes.get("Image Texture")
     texture.image_user.frame_offset = idx - 1
@@ -795,20 +800,12 @@ class MyProperties(PropertyGroup):
     )
 
 
-#    for area in bpy.context.screen.areas:
-#        if area.type == 'VIEW_3D':
-#            for space in area.spaces:
-#                if space.type == 'VIEW_3D':
-#                    global view_port
-#                    view_port = space
-
-
 # ------------------------------------------------------------------------
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
-class GenerateCamera(Operator):
-    bl_label = "Generate camera"
-    bl_idname = "addon.generate_camera"
+class LoadCamera(Operator):
+    bl_label = "Load Poses and Images"
+    bl_idname = "addon.load_camera"
 
     def execute(self, context):
         for obj in bpy.data.cameras:
@@ -820,19 +817,21 @@ class GenerateCamera(Operator):
 
         global colmap_data
 
-        # TODO: intrinsics not set
-        # https://dlr-rm.github.io/BlenderProc/docs/tutorials/camera.html
-        # https://github.com/DLR-RM/BlenderProc
+        # Load Data
+
+        # Load colmap data
         intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
         intrinsic_matrix = [[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
                             [0, intrinsic_param[0][1], intrinsic_param[0][3]],
                             [0, 0, 1]]
+
         image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
         image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
         image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
         image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
         image_id = np.stack([img.name for img in colmap_data['images'].values()])
 
+        # Load image file
         image_id_int = np.char.replace(image_id, '.jpg', '').astype(int)
         sort_image_id = np.argsort(image_id_int)
 
@@ -842,31 +841,28 @@ class GenerateCamera(Operator):
         for image in os.listdir(image_folder_path):
             file_name.append({'name': image})
 
-        #        image_sample=bpy.data.images.load(os.path.join(image_folder_path,os.listdir(image_folder_path)[-1]))
+        bpy.ops.image.open(filepath=image_folder_path,
+                           directory=image_folder_path,
+                           files=file_name,
+                           relative_path=True, show_multiview=False)
 
-        bpy.ops.image.open(filepath=image_folder_path,
-                           directory=image_folder_path,
-                           files=file_name,
-                           relative_path=True, show_multiview=False)
-        bpy.ops.image.open(filepath=image_folder_path,
-                           directory=image_folder_path,
-                           files=file_name,
-                           relative_path=True, show_multiview=False)
-        image_sequence = bpy.data.images[0]
+        image_sequence = bpy.data.images[-1]
         image_sequence.source = 'SEQUENCE'
+
+        # Camera initialization
 
         camera_data = bpy.data.cameras.new(name="Camera")
         camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
         bpy.context.scene.collection.objects.link(camera_object)
         bpy.data.objects['Camera'].rotation_mode = 'QUATERNION'
 
-        set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]), int(image_height[0]))
-
+        set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]),
+                                     int(image_height[0]))  # set intrinsic matrix
         camera = bpy.context.scene.objects['Camera']
 
+        # Camera Plane Setting
         generate_camera_plane(image_quaternion[0], invert_tvec(image_translation[0], image_quaternion[0]), camera,
-                              int(image_width[0]), int(image_height[0]))
-
+                              int(image_width[0]), int(image_height[0]))  # create plane
         plane = bpy.context.scene.objects['camera plane']
 
         plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
@@ -876,21 +872,15 @@ class GenerateCamera(Operator):
         bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
         bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
 
+        # Setting Camera & Camera Plane frame data
         idx = 1
         for i in sort_image_id:
             set_keyframe(camera, image_quaternion[i],
                          invert_tvec(image_translation[i], image_quaternion[i]),
-                         idx, 5, plane, int(image_width[0]), int(image_height[0]))
+                         idx, 1, plane, int(image_width[0]), int(image_height[0]))
             idx += 1
 
-        '''
-        bug: If run the following program in python console, the image will successfully attach to the camera plane, 
-             but if run them in python script, only part of the image will attach to the plane. 
-
-             Maybe this is because the difference of context environment in console and script.
-
-             Once this situation happen, run the 'Generate camera' operator again solve the error(don't know why).
-        '''
+        # Display image texture
         plane = bpy.context.scene.objects['camera plane']
         bpy.context.view_layer.objects.active = plane
         bpy.ops.object.mode_set(mode='EDIT')
@@ -952,25 +942,6 @@ class LoadCOLMAP(Operator):
         print("TODO: load images")
 
         return {'FINISHED'}
-
-
-# class OT_Debug(Operator):
-#    '''
-#    for easier debugging experience
-#    '''
-
-#    bl_label = "Debug"
-#    bl_idname = "addon.debug"
-
-#    def execute(self, context):
-#        scene = context.scene
-#        mytool = scene.my_tool
-
-#        print(len(colmap_data['cameras'].keys()))
-#        print(len(colmap_data['images'].keys()))
-#        print(len(colmap_data['points3D'].keys()))
-
-#        return {'FINISHED'}
 
 
 class Crop(Operator):
@@ -1131,6 +1102,25 @@ class DisplayCloud(Operator):
         return {'FINISHED'}
 
 
+class HideShowCameraPlane(Operator):
+    bl_label = "Hide/Show Camera Plane"
+    bl_idname = "addon.hide_show_cam_plane"
+
+    def execute(self, context):
+        status = bpy.context.scene.objects['camera plane'].hide_get()
+        bpy.context.scene.objects['camera plane'].hide_set(not status)
+        return {'FINISHED'}
+
+
+class ExportSceneParameters(Operator):
+    bl_label = "Export Scene Parameters"
+    bl_idname = "addon.export_scene_param"
+
+    def execute(self, context):
+        # TODO: write to json
+        return {'FINISHED'}
+
+
 # ------------------------------------------------------------------------
 #    Panel
 # ------------------------------------------------------------------------
@@ -1146,7 +1136,17 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_label = "Neuralangelo Addon"
 
     def draw(self, context):
+        scene = context.scene
         layout = self.layout
+        mytool = scene.my_tool
+
+        row = layout.row(align=True)
+        row.prop(mytool, "transparency_toggle")
+        sub = row.row()
+        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency of Objects')
+        sub.enabled = mytool.transparency_toggle
+
+        layout.row().operator('addon.export_scene_param')
 
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
@@ -1160,7 +1160,6 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
         layout.prop(mytool, "colmap_path")
         layout.operator("addon.load_colmap")
-        # layout.operator("addon.debug")
         layout.separator()
 
 
@@ -1177,13 +1176,6 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.alignment = 'CENTER'
         row.label(text="Edit bounding box")
-
-        row = box.row(align=True)
-        row.prop(mytool, "transparency_toggle")
-        sub = row.row()
-        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency')
-        sub.enabled = mytool.transparency_toggle
-        box.separator()
 
         x_row = box.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
@@ -1214,9 +1206,19 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
         # TODO: what are these?
         layout.operator("addon.review_cloud")
-        layout.separator()
 
-        layout.operator("addon.generate_camera")
+
+class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id = "panel_main"
+    bl_label = "Inspect Camera Poses"
+
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        mytool = scene.my_tool
+
+        layout.operator("addon.load_camera")
+        layout.operator("addon.hide_show_cam_plane")
 
 
 # ------------------------------------------------------------------------
@@ -1229,12 +1231,15 @@ classes = (
     MainPanel,
     LoadingPanel,
     BoundingPanel,
+    CameraPanel,
     Crop,
     BoundSphere,
     HideShowBox,
     HideShowSphere,
     DisplayCloud,
-    GenerateCamera,
+    LoadCamera,
+    HideShowCameraPlane,
+    ExportSceneParameters
 )
 
 
