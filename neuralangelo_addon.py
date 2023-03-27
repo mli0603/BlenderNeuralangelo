@@ -1,15 +1,26 @@
+import collections
+import os
+import struct
+from typing import Union
+
+import bmesh
+import bpy
+import numpy as np
+from bpy.props import (StringProperty,
+                       BoolProperty,
+                       FloatProperty,
+                       FloatVectorProperty,
+                       PointerProperty,
+                       )
+from bpy.types import (Operator,
+                       PropertyGroup,
+                       )
+from mathutils import Matrix
+
 # ------------------------------------------------------------------------
 #    COLMAP code: https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
 # ------------------------------------------------------------------------
 
-import collections
-import os
-import struct
-import bpy
-import numpy as np
-
-from typing import Union, Tuple, Optional, List
-from mathutils import Matrix, Vector, Euler
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
@@ -472,21 +483,11 @@ bl_info = {
     "category": "Interface"
 }
 
-from bpy.props import (StringProperty,
-                       BoolProperty,
-                       FloatProperty,
-                       FloatVectorProperty,
-                       PointerProperty,
-                       )
-from bpy.types import (Operator,
-                       PropertyGroup,
-                       )
-
 # global variables for easier access
 colmap_data = {}
 old_box_offset = [0, 0, 0, 0, 0, 0]
 view_port = None
-point_cloud_vertices = []
+point_cloud_vertices = None
 select_point_index = []
 
 
@@ -532,7 +533,7 @@ def generate_camera_plane(qvec, tvec, camera, image_width, image_height):
 
     bpy.context.view_layer.update()
 
-    world2camera = camera.matrix_world
+    # TODO: why are there redundant code? L753??
     camera_vert_origin = camera.data.view_frame()
 
     trans_ratio = image_width / image_height
@@ -569,6 +570,26 @@ def generate_camera_plane(qvec, tvec, camera, image_width, image_height):
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
+    # change each uv vertex
+    bm = bmesh.from_edit_mesh(plane.data)
+    uv_layer = bm.loops.layers.uv.active
+    for idx, v in enumerate(bm.verts):  # TODO: is there a way to automatically figure out the order?
+        for l in v.link_loops:
+            uv_data = l[uv_layer]
+            if idx == 0:
+                uv_data.uv[0] = 1.0
+                uv_data.uv[1] = 0.0
+            elif idx == 1:
+                uv_data.uv[0] = 1.0
+                uv_data.uv[1] = 1.0
+            elif idx == 2:
+                uv_data.uv[0] = 0.0
+                uv_data.uv[1] = 1.0
+            elif idx == 3:
+                uv_data.uv[0] = 0.0
+                uv_data.uv[1] = 0.0
+            print(v.index, uv_data.uv)
+            break
     bpy.ops.object.mode_set(mode='OBJECT')
 
 
@@ -609,9 +630,13 @@ def generate_cropping_planes():
     return
 
 
+# TODO: this fails again -- max can pass min. Please check.
 def update_cropping_plane(scene):
     global old_box_offset
     global point_cloud_vertices
+
+    if point_cloud_vertices is None:  # stop if point cloud vertices are not yet loaded
+        return
 
     max_coordinate = np.max(point_cloud_vertices, axis=0)
     min_coordinate = np.min(point_cloud_vertices, axis=0)
@@ -725,7 +750,7 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe(camera, qvec, tvec, idx, inter_frames, plane, image_width, image_height):
+def set_keyframe_camera(camera, qvec, tvec, idx, inter_frames):
     # Set rotation and translation of Camera in each frame
     qvec[0:3] *= -1
     camera.location = tvec
@@ -734,18 +759,21 @@ def set_keyframe(camera, qvec, tvec, idx, inter_frames, plane, image_width, imag
     camera.keyframe_insert(data_path='location', frame=idx * inter_frames)
     camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
 
+
+def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_height, intrinsic_matrix):
     # Set vertices of Camera plane in each frame
     bpy.context.view_layer.update()
 
     world2camera = camera.matrix_world
     camera_vert_origin = camera.data.view_frame()
-
-    trans_ratio = image_width / image_height
-
-    for vert in camera_vert_origin:
-        vert[1] /= trans_ratio  # BIG PLANE
-        # vert[0] *= trans_ratio   #SMALL PLANE
-
+    # TODO: cache these computation
+    # four corners of image plane
+    corners = np.array([[0, 0, 1], [0, image_height, 1], [image_width, image_height, 1], [image_width, 0, 1]])
+    corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
+    for vert, corner in zip(camera_vert_origin, corners_3D):
+        vert[0] = corner[0]
+        vert[1] = corner[1]
+        vert[2] = -1.0  # blender coord
     camera_verts = [world2camera @ v for v in camera_vert_origin]
     plane_verts = plane.data.vertices
 
@@ -795,7 +823,7 @@ class MyProperties(PropertyGroup):
     transparency_toggle: BoolProperty(
         name="",
         description="Toggle transparency",
-        default=True,
+        default=False,
         update=switch_viewport_to_solid
     )
 
@@ -821,15 +849,17 @@ class LoadCamera(Operator):
 
         # Load colmap data
         intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
-        intrinsic_matrix = [[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
-                            [0, intrinsic_param[0][1], intrinsic_param[0][3]],
-                            [0, 0, 1]]
+        intrinsic_matrix = np.array([[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
+                                     [0, intrinsic_param[0][1], intrinsic_param[0][3]],
+                                     [0, 0, 1]])
 
         image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
         image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
         image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
         image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
         image_id = np.stack([img.name for img in colmap_data['images'].values()])
+
+        # TODO: set start and end frame based on number of images
 
         # Load image file
         image_id_int = np.char.replace(image_id, '.jpg', '').astype(int)
@@ -875,23 +905,10 @@ class LoadCamera(Operator):
         # Setting Camera & Camera Plane frame data
         idx = 1
         for i in sort_image_id:
-            set_keyframe(camera, image_quaternion[i],
-                         invert_tvec(image_translation[i], image_quaternion[i]),
-                         idx, 1, plane, int(image_width[0]), int(image_height[0]))
+            set_keyframe_camera(camera, image_quaternion[i], invert_tvec(image_translation[i], image_quaternion[i]),
+                                idx, 1)
+            set_keyframe_image(camera, idx, 1, plane, image_width, image_height, intrinsic_matrix)
             idx += 1
-
-        # Display image texture
-        plane = bpy.context.scene.objects['camera plane']
-        bpy.context.view_layer.objects.active = plane
-        bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.select_all(action='SELECT')
-        bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
-        bpy.ops.object.mode_set(mode='OBJECT')
-        for area in bpy.context.screen.areas:
-            if area.type == 'VIEW_3D':
-                for space in area.spaces:
-                    if space.type == 'VIEW_3D':
-                        space.shading.color_type = 'TEXTURE'
 
         return {'FINISHED'}
 
@@ -902,6 +919,10 @@ class LoadCOLMAP(Operator):
     '''
     bl_label = "Load COLMAP Data"
     bl_idname = "addon.load_colmap"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.my_tool.colmap_path != ''
 
     def execute(self, context):
         scene = context.scene
@@ -934,12 +955,7 @@ class LoadCOLMAP(Operator):
         # generate bounding boxes for cropping
         generate_cropping_planes()
         reset_my_slider_to_default()
-        update_cropping_plane(bpy.context.scene)
-        print("TODO: set camera intrinsics")
-
-        print("TODO: set camera poses")
-
-        print("TODO: load images")
+        # update_cropping_plane(bpy.context.scene)
 
         return {'FINISHED'}
 
@@ -955,6 +971,10 @@ class Crop(Operator):
 
     bl_label = "Crop Pointcloud"
     bl_idname = "addon.crop"
+
+    @classmethod
+    def poll(cls, context):
+        return point_cloud_vertices is not None
 
     def execute(self, context):
         if bpy.context.active_object.mode == 'EDIT':
@@ -979,7 +999,6 @@ class Crop(Operator):
         # initialization
         mesh = bpy.data.objects['point cloud'].data
         mesh.vertices.foreach_set("hide", [True] * len(mesh.vertices))
-        print(np.where(point_cloud_vertices[:, 0] > 1))
         select_point_index = np.where((point_cloud_vertices[:, 0] >= x_min) &
                                       (point_cloud_vertices[:, 0] <= x_max) &
                                       (point_cloud_vertices[:, 1] >= y_min) &
@@ -1077,6 +1096,10 @@ class HideShowBox(Operator):
     bl_label = "Hide/Show Bounding Box"
     bl_idname = "addon.hide_show_box"
 
+    @classmethod
+    def poll(cls, context):
+        return point_cloud_vertices is not None
+
     def execute(self, context):
         status = bpy.context.scene.objects['cropping plane'].hide_get()
         bpy.context.scene.objects['cropping plane'].hide_set(not status)
@@ -1097,6 +1120,10 @@ class DisplayCloud(Operator):
     bl_label = "Display\Hide Point Cloud"
     bl_idname = "addon.review_cloud"
 
+    @classmethod
+    def poll(cls, context):
+        return point_cloud_vertices is not None
+
     def execute(self, context):
         bpy.ops.object.editmode_toggle()
         return {'FINISHED'}
@@ -1116,6 +1143,8 @@ class ExportSceneParameters(Operator):
     bl_label = "Export Scene Parameters"
     bl_idname = "addon.export_scene_param"
 
+    # TODO: add poll func so that we don't export until sphere is added
+
     def execute(self, context):
         # TODO: write to json
         return {'FINISHED'}
@@ -1132,7 +1161,7 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
 
 
 class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_idname = "panel_main"
+    bl_idname = "BN_PT_main"
     bl_label = "Neuralangelo Addon"
 
     def draw(self, context):
@@ -1150,7 +1179,8 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id = "panel_main"
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_loading"
     bl_label = "Load Data"
 
     def draw(self, context):
@@ -1164,7 +1194,8 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
 
 class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id = "panel_main"
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_bounding"
     bl_label = "Define Bounding Region"
 
     def draw(self, context):
@@ -1209,7 +1240,8 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
 
 class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id = "panel_main"
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_camera"
     bl_label = "Inspect Camera Poses"
 
     def draw(self, context):
