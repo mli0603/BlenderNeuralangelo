@@ -525,34 +525,22 @@ def display_pointcloud(points3D):
     mesh.validate()
 
 
-def generate_camera_plane(qvec_old, tvec_old, camera, image_width, image_height):
-    if 'camera plane' in bpy.data.objects:
-        obj = bpy.context.scene.objects['camera plane']
+def generate_camera_plane(camera, image_width, image_height):
+    if 'image plane' in bpy.data.objects:
+        obj = bpy.context.scene.objects['image plane']
         bpy.data.meshes.remove(obj.data, do_unlink=True)
-
-    #    qvec=transform_qvec(qvec_old)
-    #    tvec=transform_tvec(tvec_old,qvec_old)
-
-    tvec, qvec = transform(tvec_old, qvec_old)
 
     bpy.context.view_layer.update()
 
-    # TODO: why are there redundant code? L753??
-    camera_vert_origin = camera.data.view_frame()
-
-    trans_ratio = image_width / image_height
-    for vert in camera_vert_origin:
-        vert[0] *= trans_ratio
-
-    verts = camera_vert_origin
-
+    # create a plane with 4 corners
+    verts = camera.data.view_frame()
     faces = [[0, 1, 2, 3]]
-    msh = bpy.data.meshes.new("camera plane")
+    msh = bpy.data.meshes.new("image plane")
     msh.from_pydata(verts, [], faces)
-    obj = bpy.data.objects.new("camera plane", msh)
+    obj = bpy.data.objects.new("image plane", msh)
     bpy.context.scene.collection.objects.link(obj)
 
-    plane = bpy.context.scene.objects['camera plane']
+    plane = bpy.context.scene.objects['image plane']
 
     if 'Image Material' not in bpy.data.materials:
         material = bpy.data.materials.new(name="Image Material")
@@ -569,30 +557,18 @@ def generate_camera_plane(qvec_old, tvec_old, camera, image_width, image_height)
     principled_bsdf = material.node_tree.nodes.get('Principled BSDF')
     material.node_tree.links.new(image_texture.outputs['Color'], principled_bsdf.inputs['Base Color'])
 
-    plane = bpy.context.scene.objects['camera plane']
+    plane = bpy.context.scene.objects['image plane']
     bpy.context.view_layer.objects.active = plane
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
+
     # change each uv vertex
     bm = bmesh.from_edit_mesh(plane.data)
     uv_layer = bm.loops.layers.uv.active
     for idx, v in enumerate(bm.verts):  # TODO: is there a way to automatically figure out the order?
         for l in v.link_loops:
             uv_data = l[uv_layer]
-            #            if idx == 0:
-            #                uv_data.uv[0] = 1.0
-            #                uv_data.uv[1] = 0.0
-            #            elif idx == 1:
-            #                uv_data.uv[0] = 1.0
-            #                uv_data.uv[1] = 1.0
-            #            elif idx == 2:
-            #                uv_data.uv[0] = 0.0
-            #                uv_data.uv[1] = 1.0
-            #            elif idx == 3:
-            #                uv_data.uv[0] = 0.0
-            #                uv_data.uv[1] = 0.0
-            #
             if idx == 0:
                 uv_data.uv[0] = 0.0
                 uv_data.uv[1] = 0.0
@@ -605,7 +581,6 @@ def generate_camera_plane(qvec_old, tvec_old, camera, image_width, image_height)
             elif idx == 3:
                 uv_data.uv[0] = 1.0
                 uv_data.uv[1] = 0.0
-            print(v.index, uv_data.uv)
             break
     bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -647,7 +622,6 @@ def generate_cropping_planes():
     return
 
 
-# TODO: this fails again -- max can pass min. Please check.
 def update_cropping_plane(self, context):
     global old_box_offset
     global point_cloud_vertices
@@ -753,14 +727,21 @@ def delete_bounding_sphere():
 # TODO: when loading, not set to solid mode??
 def switch_viewport_to_solid(self, context):
     toggle = context.scene.my_tool.transparency_toggle
-    #    view_port.shading.type='SOLID'
-    #    view_port.shading.show_xray=toggle
     for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':
             for space in area.spaces:
                 if space.type == 'VIEW_3D':
                     space.shading.type = 'SOLID'
                     space.shading.show_xray = toggle
+
+
+def enable_texture_mode():
+    # change color mode
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    space.shading.color_type = 'TEXTURE'
 
 
 def update_transparency(self, context):
@@ -785,14 +766,19 @@ def set_keyframe_camera(camera, qvec_old, tvec_old, idx, inter_frames):
 
 
 def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_height, intrinsic_matrix):
-    # Set vertices of Camera plane in each frame
+    # Set vertices of image plane in each frame
     bpy.context.view_layer.update()
 
     world2camera = camera.matrix_world
     camera_vert_origin = camera.data.view_frame()
     # TODO: cache these computation
     # four corners of image plane
-    corners = np.array([[0, 0, 1], [0, image_height, 1], [image_width, image_height, 1], [image_width, 0, 1]])
+    corners = np.array([
+        [0, 0, 1],
+        [0, image_height, 1],
+        [image_width, image_height, 1],
+        [image_width, 0, 1]
+    ])
     corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
     for vert, corner in zip(camera_vert_origin, corners_3D):
         vert[0] = corner[0]
@@ -805,7 +791,7 @@ def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_heig
         plane_verts[i].co = camera_verts[i]
         plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
 
-    # Set image texture of Camera plane in each frame
+    # Set image texture of image plane in each frame
     material = plane.material_slots[0].material
     texture = material.node_tree.nodes.get("Image Texture")
     texture.image_user.frame_offset = idx - 1
@@ -863,49 +849,46 @@ class LoadCamera(Operator):
     def execute(self, context):
         for obj in bpy.data.cameras:
             bpy.data.cameras.remove(obj)
-        for material in bpy.data.materials:
+        for material in bpy.data.materials:  # TODO: let's only remove material for image plane
             bpy.data.materials.remove(material, do_unlink=True)
-        #        for image in bpy.data.images:
-        #            bpy.data.images.remove(image, do_unlink=True)
 
         global colmap_data
-
-        # Load Data
 
         # Load colmap data
         intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
         intrinsic_matrix = np.array([[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
                                      [0, intrinsic_param[0][1], intrinsic_param[0][3]],
-                                     [0, 0, 1]])
+                                     [0, 0, 1]])  # TODO: only supports single camera for now
 
         image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
         image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
         image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
         image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
-        image_id = np.stack([img.name for img in colmap_data['images'].values()])
+        camera_id = np.stack([img.camera_id for img in colmap_data['images'].values()]) - 1  # make it zero-indexed
+        image_names = np.stack([img.name for img in colmap_data['images'].values()])
+        num_image = image_names.shape[0]
 
-        # TODO: set start and end frame based on number of images
+        # set start and end frame
+        context.scene.frame_start = 1
+        context.scene.frame_end = num_image
 
         # Load image file
-        image_id_int = np.char.replace(image_id, '.jpg', '').astype(int)
-        sort_image_id = np.argsort(image_id_int)
-
+        sort_image_id = np.argsort(image_names)
         image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
 
         file_name = []
-        for image in os.listdir(image_folder_path):
-            file_name.append({'name': image})
+        for image_id in sort_image_id:
+            file_name.append({'name': image_names[image_id]})
 
         bpy.ops.image.open(filepath=image_folder_path,
                            directory=image_folder_path,
                            files=file_name,
                            relative_path=True, show_multiview=False)
 
-        image_sequence = bpy.data.images[-1]
+        image_sequence = bpy.data.images[file_name[0]['name']]  # sequence named after the first image filename
         image_sequence.source = 'SEQUENCE'
 
         # Camera initialization
-
         camera_data = bpy.data.cameras.new(name="Camera")
         camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
         bpy.context.scene.collection.objects.link(camera_object)
@@ -915,10 +898,9 @@ class LoadCamera(Operator):
                                      int(image_height[0]))  # set intrinsic matrix
         camera = bpy.context.scene.objects['Camera']
 
-        # Camera Plane Setting
-        generate_camera_plane(image_quaternion[0], image_translation[0], camera,
-                              int(image_width[0]), int(image_height[0]))  # create plane
-        plane = bpy.context.scene.objects['camera plane']
+        # Image Plane Setting
+        generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
+        plane = bpy.context.scene.objects['image plane']
 
         plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
         bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
@@ -927,19 +909,14 @@ class LoadCamera(Operator):
         bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
         bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
 
-        # Setting Camera & Camera Plane frame data
-        idx = 1
-        for i in sort_image_id:
-            set_keyframe_camera(camera, image_quaternion[i], image_translation[i], idx, 1)
-            set_keyframe_image(camera, idx, 1, plane, image_width, image_height, intrinsic_matrix)
-            idx += 1
+        # Setting Camera & Image Plane frame data
+        for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
+            frame_id = idx + 1  # one-indexed
+            set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
+            set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
 
-        # change color mode
-        for area in bpy.context.screen.areas:
-            if area.type == 'VIEW_3D':
-                for space in area.spaces:
-                    if space.type == 'VIEW_3D':
-                        space.shading.color_type = 'TEXTURE'
+        enable_texture_mode()
+
         return {'FINISHED'}
 
 
@@ -1079,8 +1056,7 @@ class BoundSphere(Operator):
         center_y = (y_min + y_max) / 2
         center_z = (z_min + z_max) / 2
 
-        # TODO: clean up
-        Radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
+        radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
                 unhide_verts[:, 2] - center_z) ** 2))
         center = (center_x, center_y, center_z)
 
@@ -1090,8 +1066,8 @@ class BoundSphere(Operator):
 
         for i in range(num_segments):
             theta1 = i * 2 * np.pi / num_segments
-            z = Radius * np.sin(theta1)
-            xy = Radius * np.cos(theta1)
+            z = radius * np.sin(theta1)
+            xy = radius * np.cos(theta1)
             for j in range(num_segments):
                 theta2 = j * 2 * np.pi / num_segments
                 x = xy * np.sin(theta2)
@@ -1146,9 +1122,9 @@ class HideShowSphere(Operator):
         return {'FINISHED'}
 
 
-class DisplayCloud(Operator):
-    bl_label = "Display\Hide Point Cloud"
-    bl_idname = "addon.review_cloud"
+class HideShowCroppedPoints(Operator):
+    bl_label = "Hide/Show Cropped Points"
+    bl_idname = "addon.hide_show_cropped"
 
     @classmethod
     def poll(cls, context):
@@ -1160,12 +1136,12 @@ class DisplayCloud(Operator):
 
 
 class HideShowCameraPlane(Operator):
-    bl_label = "Hide/Show Camera Plane"
+    bl_label = "Hide/Show Image Plane"
     bl_idname = "addon.hide_show_cam_plane"
 
     def execute(self, context):
-        status = bpy.context.scene.objects['camera plane'].hide_get()
-        bpy.context.scene.objects['camera plane'].hide_set(not status)
+        status = bpy.context.scene.objects['image plane'].hide_get()
+        bpy.context.scene.objects['image plane'].hide_set(not status)
         return {'FINISHED'}
 
 
@@ -1265,9 +1241,6 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row.operator("addon.add_bound_sphere")
         row.operator("addon.hide_show_sphere")
 
-        # TODO: what are these?
-        layout.operator("addon.review_cloud")
-
 
 class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_parent_id = "BN_PT_main"
@@ -1280,6 +1253,8 @@ class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         mytool = scene.my_tool
 
         layout.operator("addon.load_camera")
+        layout.operator("addon.hide_show_cropped")
+        # layout.operator("addon.hide_show_cropped") # TODO: add a button to select all points and enter edit mode (highlight the points)
         layout.operator("addon.hide_show_cam_plane")
 
 
@@ -1298,7 +1273,7 @@ classes = (
     BoundSphere,
     HideShowBox,
     HideShowSphere,
-    DisplayCloud,
+    HideShowCroppedPoints,
     LoadCamera,
     HideShowCameraPlane,
     ExportSceneParameters
