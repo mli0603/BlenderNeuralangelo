@@ -508,26 +508,17 @@ def display_pointcloud(points3D):
     rgbs = np.stack([point.rgb for point in points3D.values()])  # / 255.0
 
     # Copy the positions
-    ply_name = 'point cloud'
+    ply_name = 'Point Cloud'
     mesh = bpy.data.meshes.new(name=ply_name)
     mesh.vertices.add(xyzs.shape[0])
     mesh.vertices.foreach_set("co", [a for v in xyzs for a in v])
-
-    # Create our new object here
-    for ob in bpy.context.selected_objects:
-        ob.select_set(False)
     obj = bpy.data.objects.new(ply_name, mesh)
-    bpy.context.collection.objects.link(obj)
-    bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
-
-    mesh.update()
-    mesh.validate()
+    bpy.context.scene.collection.objects.link(obj)
 
 
 def generate_camera_plane(camera, image_width, image_height):
-    if 'image plane' in bpy.data.objects:
-        obj = bpy.context.scene.objects['image plane']
+    if 'Image Plane' in bpy.data.objects:
+        obj = bpy.context.scene.objects['Image Plane']
         bpy.data.meshes.remove(obj.data, do_unlink=True)
 
     bpy.context.view_layer.update()
@@ -535,12 +526,12 @@ def generate_camera_plane(camera, image_width, image_height):
     # create a plane with 4 corners
     verts = camera.data.view_frame()
     faces = [[0, 1, 2, 3]]
-    msh = bpy.data.meshes.new("image plane")
+    msh = bpy.data.meshes.new('Image Plane')
     msh.from_pydata(verts, [], faces)
-    obj = bpy.data.objects.new("image plane", msh)
+    obj = bpy.data.objects.new('Image Plane', msh)
     bpy.context.scene.collection.objects.link(obj)
 
-    plane = bpy.context.scene.objects['image plane']
+    plane = bpy.context.scene.objects['Image Plane']
 
     if 'Image Material' not in bpy.data.materials:
         material = bpy.data.materials.new(name="Image Material")
@@ -557,7 +548,7 @@ def generate_camera_plane(camera, image_width, image_height):
     principled_bsdf = material.node_tree.nodes.get('Principled BSDF')
     material.node_tree.links.new(image_texture.outputs['Color'], principled_bsdf.inputs['Base Color'])
 
-    plane = bpy.context.scene.objects['image plane']
+    plane = bpy.context.scene.objects['Image Plane']
     bpy.context.view_layer.objects.active = plane
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
@@ -614,9 +605,9 @@ def generate_cropping_planes():
              [0, 1, 2, 3],
              [4, 5, 6, 7]]
 
-    msh = bpy.data.meshes.new("cropping plane")
+    msh = bpy.data.meshes.new('Bounding Box')
     msh.from_pydata(verts, [], faces)
-    obj = bpy.data.objects.new("cropping plane", msh)
+    obj = bpy.data.objects.new('Bounding Box', msh)
     bpy.context.scene.collection.objects.link(obj)
 
     return
@@ -640,7 +631,7 @@ def update_cropping_plane(self, context):
     z_max = max_coordinate[2]
 
     slider = bpy.context.scene.my_tool.box_slider
-    crop_plane = bpy.data.objects['cropping plane']
+    crop_plane = bpy.data.objects['Bounding Box']
 
     x_min_change = -slider[0]
     x_max_change = -slider[1]
@@ -900,7 +891,7 @@ class LoadCamera(Operator):
 
         # Image Plane Setting
         generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
-        plane = bpy.context.scene.objects['image plane']
+        plane = bpy.context.scene.objects['Image Plane']
 
         plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
         bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
@@ -991,7 +982,7 @@ class Crop(Operator):
         global point_cloud_vertices
         global select_point_index
 
-        box_verts = np.array([v.co for v in bpy.data.objects['cropping plane'].data.vertices])
+        box_verts = np.array([v.co for v in bpy.data.objects['Bounding Box'].data.vertices])
 
         max_coordinate = np.max(box_verts, axis=0)
         min_coordinate = np.min(box_verts, axis=0)
@@ -1004,7 +995,7 @@ class Crop(Operator):
         z_max = max_coordinate[2]
 
         # initialization
-        mesh = bpy.data.objects['point cloud'].data
+        mesh = bpy.data.objects['Point Cloud'].data
         mesh.vertices.foreach_set("hide", [True] * len(mesh.vertices))
         select_point_index = np.where((point_cloud_vertices[:, 0] >= x_min) &
                                       (point_cloud_vertices[:, 0] <= x_max) &
@@ -1014,10 +1005,10 @@ class Crop(Operator):
                                       (point_cloud_vertices[:, 2] <= z_max))
 
         for index in select_point_index[0]:
-            bpy.data.objects['point cloud'].data.vertices[index].hide = False
+            bpy.data.objects['Point Cloud'].data.vertices[index].hide = False
 
-        if 'point cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['point cloud']
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
             bpy.context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode='EDIT')
 
@@ -1090,8 +1081,8 @@ class BoundSphere(Operator):
         sphere_obj = bpy.data.objects.new("Bounding Sphere", sphere_mesh)
         bpy.context.scene.collection.objects.link(sphere_obj)
 
-        if 'point cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['point cloud']
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
             bpy.context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode='EDIT')
 
@@ -1107,8 +1098,8 @@ class HideShowBox(Operator):
         return point_cloud_vertices is not None
 
     def execute(self, context):
-        status = bpy.context.scene.objects['cropping plane'].hide_get()
-        bpy.context.scene.objects['cropping plane'].hide_set(not status)
+        status = bpy.context.scene.objects['Bounding Box'].hide_get()
+        bpy.context.scene.objects['Bounding Box'].hide_set(not status)
         return {'FINISHED'}
 
 
@@ -1135,24 +1126,45 @@ class HideShowCroppedPoints(Operator):
         return {'FINISHED'}
 
 
-class HideShowCameraPlane(Operator):
-    bl_label = "Hide/Show Image Plane"
-    bl_idname = "addon.hide_show_cam_plane"
-
-    def execute(self, context):
-        status = bpy.context.scene.objects['image plane'].hide_get()
-        bpy.context.scene.objects['image plane'].hide_set(not status)
-        return {'FINISHED'}
-
-
 class ExportSceneParameters(Operator):
     bl_label = "Export Scene Parameters"
     bl_idname = "addon.export_scene_param"
 
     # TODO: add poll func so that we don't export until sphere is added
+    @classmethod
+    def poll(cls, context):
+        return point_cloud_vertices is not None
 
     def execute(self, context):
         # TODO: write to json
+        return {'FINISHED'}
+
+
+class HideShowImagePlane(Operator):
+    bl_label = "Hide/Show Image Plane"
+    bl_idname = "addon.hide_show_cam_plane"
+
+    @classmethod
+    def poll(cls, context):
+        return 'Image Plane' in context.scene.collection.objects
+
+    def execute(self, context):
+        status = bpy.context.scene.objects['Image Plane'].hide_get()
+        bpy.context.scene.objects['Image Plane'].hide_set(not status)
+        return {'FINISHED'}
+
+
+class HighlightPointcloud(Operator):
+    bl_label = "Highlight Pointcloud"
+    bl_idname = "addon.highlight_pointcloud"
+
+    @classmethod
+    def poll(cls, context):
+        # do not enable when no point cloud is loaded and camera not created
+        return 'Point Cloud' in context.scene.collection.objects and 'Camera' in context.scene.collection.objects
+
+    def execute(self, context):
+        # TODO: make point cloud active, change to edit mode, and select all points
         return {'FINISHED'}
 
 
@@ -1181,8 +1193,6 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         sub.prop(mytool, "transparency_slider", slider=True, text='Transparency of Objects')
         sub.enabled = mytool.transparency_toggle
 
-        layout.row().operator('addon.export_scene_param')
-
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_parent_id = "BN_PT_main"
@@ -1209,10 +1219,11 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout = self.layout
         mytool = scene.my_tool
 
+        # bounding box
         box = layout.box()
         row = box.row()
         row.alignment = 'CENTER'
-        row.label(text="Edit bounding box")
+        row.label(text="Edit Bounding Box")
 
         x_row = box.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
@@ -1230,16 +1241,19 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.operator("addon.hide_show_box")
         row.operator("addon.crop")
+        box.row().operator("addon.hide_show_cropped")
 
         layout.separator()
 
+        # bounding sphere
         box = layout.box()
         row = box.row()
         row.alignment = 'CENTER'
-        row.label(text="Create bounding sphere")
+        row.label(text="Create Bounding Sphere")
         row = box.row()
         row.operator("addon.add_bound_sphere")
         row.operator("addon.hide_show_sphere")
+        box.row().operator('addon.export_scene_param')
 
 
 class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
@@ -1252,10 +1266,14 @@ class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout = self.layout
         mytool = scene.my_tool
 
-        layout.operator("addon.load_camera")
-        layout.operator("addon.hide_show_cropped")
-        # layout.operator("addon.hide_show_cropped") # TODO: add a button to select all points and enter edit mode (highlight the points)
-        layout.operator("addon.hide_show_cam_plane")
+        box = layout.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="Load Camera Data")
+        row = box.row()
+        row.operator("addon.load_camera")
+        row.operator("addon.hide_show_cam_plane")
+        box.row().operator("addon.highlight_pointcloud")
 
 
 # ------------------------------------------------------------------------
@@ -1275,8 +1293,9 @@ classes = (
     HideShowSphere,
     HideShowCroppedPoints,
     LoadCamera,
-    HideShowCameraPlane,
-    ExportSceneParameters
+    HideShowImagePlane,
+    ExportSceneParameters,
+    HighlightPointcloud
 )
 
 
