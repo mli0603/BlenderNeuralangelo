@@ -305,12 +305,15 @@ def rotmat2qvec(R):
     return qvec
 
 
-def invert_tvec(tvec, qvec):
+def transform(tvec, qvec):
+    Trans_Matrix = np.array([[1, 0, 0],
+                             [0, -1, 0],
+                             [0, 0, -1]])
     R = qvec2rotmat(qvec)
-    R = R.T
-    tvec = -np.dot(R, tvec)
-    tvec_invert = np.array([tvec[0], tvec[1], tvec[2]])
-    return tvec_invert
+    tvec_blender = -np.dot(R.T, tvec)
+    rotation = np.dot(R.T, Trans_Matrix)
+    qvec_blender = rotmat2qvec(rotation)
+    return tvec_blender, qvec_blender
 
 
 # ------------------------------------------------------------------------
@@ -522,14 +525,15 @@ def display_pointcloud(points3D):
     mesh.validate()
 
 
-def generate_camera_plane(qvec, tvec, camera, image_width, image_height):
+def generate_camera_plane(qvec_old, tvec_old, camera, image_width, image_height):
     if 'camera plane' in bpy.data.objects:
         obj = bpy.context.scene.objects['camera plane']
         bpy.data.meshes.remove(obj.data, do_unlink=True)
 
-    qvec[0:3] *= -1
-    camera.location = tvec
-    camera.rotation_quaternion = np.roll(qvec, 1)
+    #    qvec=transform_qvec(qvec_old)
+    #    tvec=transform_tvec(tvec_old,qvec_old)
+
+    tvec, qvec = transform(tvec_old, qvec_old)
 
     bpy.context.view_layer.update()
 
@@ -576,17 +580,30 @@ def generate_camera_plane(qvec, tvec, camera, image_width, image_height):
     for idx, v in enumerate(bm.verts):  # TODO: is there a way to automatically figure out the order?
         for l in v.link_loops:
             uv_data = l[uv_layer]
+            #            if idx == 0:
+            #                uv_data.uv[0] = 1.0
+            #                uv_data.uv[1] = 0.0
+            #            elif idx == 1:
+            #                uv_data.uv[0] = 1.0
+            #                uv_data.uv[1] = 1.0
+            #            elif idx == 2:
+            #                uv_data.uv[0] = 0.0
+            #                uv_data.uv[1] = 1.0
+            #            elif idx == 3:
+            #                uv_data.uv[0] = 0.0
+            #                uv_data.uv[1] = 0.0
+            #
             if idx == 0:
-                uv_data.uv[0] = 1.0
+                uv_data.uv[0] = 0.0
                 uv_data.uv[1] = 0.0
             elif idx == 1:
-                uv_data.uv[0] = 1.0
+                uv_data.uv[0] = 0.0
                 uv_data.uv[1] = 1.0
             elif idx == 2:
-                uv_data.uv[0] = 0.0
+                uv_data.uv[0] = 1.0
                 uv_data.uv[1] = 1.0
             elif idx == 3:
-                uv_data.uv[0] = 0.0
+                uv_data.uv[0] = 1.0
                 uv_data.uv[1] = 0.0
             print(v.index, uv_data.uv)
             break
@@ -750,11 +767,13 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe_camera(camera, qvec, tvec, idx, inter_frames):
+def set_keyframe_camera(camera, qvec_old, tvec_old, idx, inter_frames):
     # Set rotation and translation of Camera in each frame
-    qvec[0:3] *= -1
+
+    tvec, qvec = transform(tvec_old, qvec_old)
+
+    camera.rotation_quaternion = qvec
     camera.location = tvec
-    camera.rotation_quaternion = np.roll(qvec, 1)
 
     camera.keyframe_insert(data_path='location', frame=idx * inter_frames)
     camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
@@ -891,7 +910,7 @@ class LoadCamera(Operator):
         camera = bpy.context.scene.objects['Camera']
 
         # Camera Plane Setting
-        generate_camera_plane(image_quaternion[0], invert_tvec(image_translation[0], image_quaternion[0]), camera,
+        generate_camera_plane(image_quaternion[0], image_translation[0], camera,
                               int(image_width[0]), int(image_height[0]))  # create plane
         plane = bpy.context.scene.objects['camera plane']
 
@@ -905,11 +924,16 @@ class LoadCamera(Operator):
         # Setting Camera & Camera Plane frame data
         idx = 1
         for i in sort_image_id:
-            set_keyframe_camera(camera, image_quaternion[i], invert_tvec(image_translation[i], image_quaternion[i]),
-                                idx, 1)
+            set_keyframe_camera(camera, image_quaternion[i], image_translation[i], idx, 1)
             set_keyframe_image(camera, idx, 1, plane, image_width, image_height, intrinsic_matrix)
             idx += 1
 
+        # change color mode
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space.shading.color_type = 'TEXTURE'
         return {'FINISHED'}
 
 
