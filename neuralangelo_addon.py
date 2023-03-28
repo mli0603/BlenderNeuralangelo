@@ -648,7 +648,7 @@ def generate_cropping_planes():
 
 
 # TODO: this fails again -- max can pass min. Please check.
-def update_cropping_plane(scene):
+def update_cropping_plane(self, context):
     global old_box_offset
     global point_cloud_vertices
 
@@ -675,22 +675,27 @@ def update_cropping_plane(scene):
     z_min_change = -slider[4]
     z_max_change = -slider[5]
 
-    if x_min_change != old_box_offset[0] and x_max + x_max_change < x_min - x_min_change:
+    if -x_min_change != old_box_offset[0] and x_max + x_max_change < x_min - x_min_change:
         x_min_change = x_min - (x_max + x_max_change)
         slider[0] = old_box_offset[0]
-    elif x_max_change != old_box_offset[1] and x_max + x_max_change < x_min - x_min_change:
+
+    elif -x_max_change != old_box_offset[1] and x_max + x_max_change < x_min - x_min_change:
         x_max_change = x_min - x_min_change - x_max
         slider[1] = old_box_offset[1]
-    elif y_min_change != old_box_offset[2] and y_max + y_max_change < y_min - y_min_change:
+
+    elif -y_min_change != old_box_offset[2] and y_max + y_max_change < y_min - y_min_change:
         y_min_change = y_min - (y_max + y_max_change)
         slider[2] = old_box_offset[2]
-    elif y_max_change != old_box_offset[3] and y_max + y_max_change < y_min - y_min_change:
+
+    elif -y_max_change != old_box_offset[3] and y_max + y_max_change < y_min - y_min_change:
         y_max_change = y_min - y_min_change - y_max
         slider[3] = old_box_offset[3]
-    elif z_min_change != old_box_offset[4] and z_max + z_max_change < z_min - z_min_change:
+
+    elif -z_min_change != old_box_offset[4] and z_max + z_max_change < z_min - z_min_change:
         z_min_change = z_min - (z_max + z_max_change)
         slider[4] = old_box_offset[4]
-    elif z_max_change != old_box_offset[5] and z_max + z_max_change < z_min - z_min_change:
+
+    elif -z_max_change != old_box_offset[5] and z_max + z_max_change < z_min - z_min_change:
         z_max_change = z_min - z_min_change - z_max
         slider[5] = old_box_offset[5]
 
@@ -830,6 +835,7 @@ class MyProperties(PropertyGroup):
         min=0,
         max=20,
         default=(0, 0, 0, 0, 0, 0),
+        update=update_cropping_plane
     )
     transparency_slider: FloatProperty(
         name="Transparency",
@@ -1305,7 +1311,6 @@ def register():
         register_class(cls)
 
     bpy.types.Scene.my_tool = PointerProperty(type=MyProperties)
-    bpy.app.handlers.depsgraph_update_post.append(update_cropping_plane)
 
 
 def unregister():
@@ -1313,7 +1318,6 @@ def unregister():
     for cls in reversed(classes):
         unregister_class(cls)
     del bpy.types.Scene.my_tool
-    bpy.app.handlers.depsgraph_update_post.remove(update_cropping_plane)
 
 
 if __name__ == "__main__":
