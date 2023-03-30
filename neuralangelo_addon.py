@@ -767,11 +767,11 @@ def update_cropping_plane(self, context):
                                  (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
 
     text_object_ymin.location = (
-    (x_max + x_max_change + x_min - x_min_change) / 2 + text_width, y_min - y_min_change - 1,
-    (z_max + z_max_change + z_min - z_min_change) / 2)
+        (x_max + x_max_change + x_min - x_min_change) / 2 + text_width, y_min - y_min_change - 1,
+        (z_max + z_max_change + z_min - z_min_change) / 2)
     text_object_ymax.location = (
-    (x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
-    (z_max + z_max_change + z_min - z_min_change) / 2)
+        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
+        (z_max + z_max_change + z_min - z_min_change) / 2)
 
     text_object_zmin.location = (
         (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
@@ -1118,7 +1118,7 @@ class BoundSphere(Operator):
         global radius
         global center
 
-        if bpy.context.active_object.mode == 'EDIT':
+        if bpy.context.active_object.mode == 'EDIT':  # TODO: directly click create bounding sphere returns error. None object has no attribute 'mode'
             bpy.ops.object.editmode_toggle()
         delete_bounding_sphere()
 
@@ -1191,6 +1191,12 @@ class HideShowBox(Operator):
     def execute(self, context):
         status = bpy.context.scene.objects['Bounding Box'].hide_get()
         bpy.context.scene.objects['Bounding Box'].hide_set(not status)
+        bpy.context.scene.objects['x_max_label'].hide_set(not status)
+        bpy.context.scene.objects['x_min_label'].hide_set(not status)
+        bpy.context.scene.objects['y_max_label'].hide_set(not status)
+        bpy.context.scene.objects['y_min_label'].hide_set(not status)
+        bpy.context.scene.objects['z_max_label'].hide_set(not status)
+        bpy.context.scene.objects['z_min_label'].hide_set(not status)
         return {'FINISHED'}
 
 
@@ -1217,7 +1223,7 @@ class HideShowCroppedPoints(Operator):
         return point_cloud_vertices is not None
 
     def execute(self, context):
-        bpy.ops.object.editmode_toggle()
+        bpy.ops.object.editmode_toggle()  # TODO: if uncropped, return error.
         return {'FINISHED'}
 
 
@@ -1225,13 +1231,11 @@ class ExportSceneParameters(Operator):
     bl_label = "Export Scene Parameters"
     bl_idname = "addon.export_scene_param"
 
-    # TODO: add poll func so that we don't export until sphere is added
     @classmethod
     def poll(cls, context):
         return 'Bounding Sphere' in context.scene.collection.objects
 
     def execute(self, context):
-        # TODO: write to json
         global radius
         global center
         sphere_data = {
@@ -1239,7 +1243,7 @@ class ExportSceneParameters(Operator):
             "Sphere Radius": radius
         }
 
-        with open("scene_data.json", "w") as outputfile:
+        with open("scene_data.json", "w") as outputfile:  # TODO: permission denied. Write to the path of input dir
             json.dump(sphere_data, outputfile)
         return {'FINISHED'}
 
@@ -1268,7 +1272,7 @@ class HighlightPointcloud(Operator):
         return 'Point Cloud' in context.scene.collection.objects and 'Camera' in context.scene.collection.objects
 
     def execute(self, context):
-        # TODO: make point cloud active, change to edit mode, and select all points
+        # TODO: select all points
         if 'Point Cloud' in bpy.data.objects:
             obj = bpy.context.scene.objects['Point Cloud']
             bpy.context.view_layer.objects.active = obj
@@ -1348,8 +1352,8 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         box.separator()
         row = box.row()
         row.operator("addon.crop")
-        row.operator("addon.hide_show_box")
-        box.row().operator("addon.hide_show_cropped")
+        box.row().operator("addon.hide_show_box")
+        row.operator("addon.hide_show_cropped")
 
         layout.separator()
 
@@ -1358,9 +1362,8 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.alignment = 'CENTER'
         row.label(text="Create Bounding Sphere")
-        row = box.row()
-        row.operator("addon.add_bound_sphere")
-        row.operator("addon.hide_show_sphere")
+        box.row().operator("addon.add_bound_sphere")
+        box.row().operator("addon.hide_show_sphere")
         box.row().operator('addon.export_scene_param')
 
 
