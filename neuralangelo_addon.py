@@ -1024,7 +1024,7 @@ class LoadCOLMAP(Operator):
         for curve in bpy.data.curves:
             bpy.data.curves.remove(curve, do_unlink=True)
 
-            # load data
+        # load data
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
 
@@ -1057,10 +1057,10 @@ class Crop(Operator):
     bl_label = "Crop Pointcloud"
     bl_idname = "addon.crop"
 
-    #    @classmethod
-    #    def poll(cls, context):
-    ##        global point_cloud_vertices
-    #        return point_cloud_vertices is not None
+    @classmethod
+    def poll(cls, context):
+        global point_cloud_vertices
+        return point_cloud_vertices is not None
 
     def execute(self, context):
         if 'Point Cloud' in bpy.data.objects:
@@ -1111,15 +1111,19 @@ class BoundSphere(Operator):
 
     bl_label = "Create Bounding Sphere"
     bl_idname = "addon.add_bound_sphere"
-
+    @classmethod
+    def poll(cls, context):
+        global select_point_index
+        if select_point_index:
+            return True
+        else :
+            return False
     def execute(self, context):
         global point_cloud_vertices
         global select_point_index
         global radius
         global center
 
-        if bpy.context.active_object.mode == 'EDIT':  # TODO: directly click create bounding sphere returns error. None object has no attribute 'mode'
-            bpy.ops.object.editmode_toggle()
         delete_bounding_sphere()
 
         unhide_verts = point_cloud_vertices[select_point_index]
@@ -1219,9 +1223,14 @@ class HideShowCroppedPoints(Operator):
     bl_idname = "addon.hide_show_cropped"
 
     @classmethod
+#    def poll(cls, context):
+#        return point_cloud_vertices is not None
     def poll(cls, context):
-        return point_cloud_vertices is not None
-
+        global select_point_index
+        if select_point_index:
+            return True
+        else :
+            return False
     def execute(self, context):
         bpy.ops.object.editmode_toggle()  # TODO: if uncropped, return error.
         return {'FINISHED'}
@@ -1242,8 +1251,8 @@ class ExportSceneParameters(Operator):
             "Sphere Center": center,
             "Sphere Radius": radius
         }
-
-        with open("scene_data.json", "w") as outputfile:  # TODO: permission denied. Write to the path of input dir
+        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
+        with open(file_path, "w") as outputfile:  # TODO: permission denied. Write to the path of input dir
             json.dump(sphere_data, outputfile)
         return {'FINISHED'}
 
