@@ -1,6 +1,8 @@
 import collections
 import os
 import struct
+import json
+import math
 from typing import Union
 
 import bmesh
@@ -610,6 +612,55 @@ def generate_cropping_planes():
     obj = bpy.data.objects.new('Bounding Box', msh)
     bpy.context.scene.collection.objects.link(obj)
 
+    # Add plane text
+    text_object_xmin = bpy.data.objects.new("x_min_label", bpy.data.curves.new(type="FONT", name="x_min"))
+    text_object_xmin.data.body = "x min"
+    text_object_xmin.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_xmin)
+
+    text_object_xmax = bpy.data.objects.new("x_max_label", bpy.data.curves.new(type="FONT", name="x_max"))
+    text_object_xmax.data.body = "x max"
+    text_object_xmax.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_xmax)
+
+    text_object_ymin = bpy.data.objects.new("y_min_label", bpy.data.curves.new(type="FONT", name="y_min"))
+    text_object_ymin.data.body = "y min"
+    text_object_ymin.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_ymin)
+
+    text_object_ymax = bpy.data.objects.new("y_max_label", bpy.data.curves.new(type="FONT", name="y_max"))
+    text_object_ymax.data.body = "y max"
+    text_object_ymax.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_ymax)
+
+    text_object_zmin = bpy.data.objects.new("z_min_label", bpy.data.curves.new(type="FONT", name="z_min"))
+    text_object_zmin.data.body = "z min"
+    text_object_zmin.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_zmin)
+
+    text_object_zmax = bpy.data.objects.new("z_max_label", bpy.data.curves.new(type="FONT", name="z_max"))
+    text_object_zmax.data.body = "z max"
+    text_object_zmax.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_zmax)
+
+    text_object_xmin.rotation_euler = (-math.radians(90), -math.radians(90), 0)
+    text_object_xmax.rotation_euler = (-math.radians(90), -math.radians(90), 0)
+
+    text_object_ymin.rotation_euler = (0, 0, 0)
+    text_object_ymax.rotation_euler = (0, 0, 0)
+
+    text_object_zmin.rotation_euler = (-math.radians(90), 0, 0)
+    text_object_zmax.rotation_euler = (-math.radians(90), 0, 0)
+
+    text_object_xmin.location = (x_min - 1, (y_max + y_min) / 2, (z_max + z_min) / 2)
+    text_object_xmax.location = (x_max + 0.5, (y_max + y_min) / 2, (z_max + z_min) / 2)
+
+    text_object_ymin.location = ((x_max + x_min) / 2, y_min - 1, (z_max + z_min) / 2)
+    text_object_ymax.location = ((x_max + x_min) / 2, y_max + 0.5, (z_max + z_min) / 2)
+
+    text_object_zmin.location = ((x_max + x_min) / 2, (y_max + y_min) / 2, z_min - 1)
+    text_object_zmax.location = ((x_max + x_min) / 2, (y_max + y_min) / 2, z_max + 0.5)
+
     return
 
 
@@ -697,6 +748,33 @@ def update_cropping_plane(self, context):
     crop_plane.data.vertices[7].co.x = x_min - x_min_change
     crop_plane.data.vertices[7].co.y = y_max + y_max_change
     crop_plane.data.vertices[7].co.z = z_max + z_max_change
+
+    text_object_xmin = bpy.data.objects['x_min_label']
+    text_object_xmax = bpy.data.objects['x_max_label']
+    text_object_ymin = bpy.data.objects['y_min_label']
+    text_object_ymax = bpy.data.objects['y_max_label']
+    text_object_zmin = bpy.data.objects['z_min_label']
+    text_object_zmax = bpy.data.objects['z_max_label']
+# update text location and rotation
+
+    text_width=bpy.context.scene.objects['x_min_label'].dimensions[0]/2
+
+    text_object_xmin.location = (x_min - x_min_change - 1, (y_max + y_max_change + y_min - y_min_change) / 2,
+                                 (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
+    text_object_xmax.location = (x_max + x_max_change + 0.5, (y_max + y_max_change + y_min - y_min_change) / 2,
+                                 (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
+
+    text_object_ymin.location = ((x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_min - y_min_change - 1,
+                                 (z_max + z_max_change + z_min - z_min_change) / 2)
+    text_object_ymax.location = ((x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
+                                 (z_max + z_max_change + z_min - z_min_change) / 2)
+
+    text_object_zmin.location = (
+    (x_max + x_max_change + x_min - x_min_change) / 2, (y_max + y_max_change + y_min - y_min_change) / 2,
+    z_min - z_min_change)
+    text_object_zmax.location = (
+    (x_max + x_max_change + x_min - x_min_change) / 2, (y_max + y_max_change + y_min - y_min_change) / 2,
+    z_max + z_max_change + 0.5)
 
 
 def reset_my_slider_to_default():
@@ -937,7 +1015,10 @@ class LoadCOLMAP(Operator):
             bpy.data.materials.remove(material, do_unlink=True)
         for image in bpy.data.images:
             bpy.data.images.remove(image, do_unlink=True)
-        # load data
+        for curve in bpy.data.curves:
+            bpy.data.curves.remove(curve, do_unlink=True)
+
+            # load data
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
 
@@ -970,14 +1051,16 @@ class Crop(Operator):
     bl_label = "Crop Pointcloud"
     bl_idname = "addon.crop"
 
-    @classmethod
-    def poll(cls, context):
-        return point_cloud_vertices is not None
+    #    @classmethod
+    #    def poll(cls, context):
+    ##        global point_cloud_vertices
+    #        return point_cloud_vertices is not None
 
     def execute(self, context):
-        if bpy.context.active_object.mode == 'EDIT':
-            bpy.ops.object.editmode_toggle()
-        delete_bounding_sphere()
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='OBJECT')
 
         global point_cloud_vertices
         global select_point_index
@@ -1107,6 +1190,10 @@ class HideShowSphere(Operator):
     bl_label = "Hide/Show Bounding Sphere"
     bl_idname = "addon.hide_show_sphere"
 
+    @classmethod
+    def poll(cls, context):
+        return 'Bounding Sphere' in context.scene.collection.objects
+
     def execute(self, context):
         status = bpy.context.scene.objects['Bounding Sphere'].hide_get()
         bpy.context.scene.objects['Bounding Sphere'].hide_set(not status)
@@ -1133,10 +1220,17 @@ class ExportSceneParameters(Operator):
     # TODO: add poll func so that we don't export until sphere is added
     @classmethod
     def poll(cls, context):
-        return point_cloud_vertices is not None
+        return 'Bounding Sphere' in context.scene.collection.objects
 
     def execute(self, context):
         # TODO: write to json
+        scene_parameter = {}
+        # for parameter in bpy.context.scene.keys():
+        #     if not isinstance(bpy.context.scene[parameter],
+        #                       (bpy.types.PropertyGroup, bpy.types.Object, bpy.types.Material)):
+        #         scene_parameter[parameter] = bpy.context.scene[parameter]
+        with open("scene_data.json", "w") as outputfile:
+            json.dump(scene_parameter, outputfile)
         return {'FINISHED'}
 
 
@@ -1165,6 +1259,10 @@ class HighlightPointcloud(Operator):
 
     def execute(self, context):
         # TODO: make point cloud active, change to edit mode, and select all points
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='EDIT')
         return {'FINISHED'}
 
 
@@ -1239,8 +1337,8 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
         box.separator()
         row = box.row()
-        row.operator("addon.hide_show_box")
         row.operator("addon.crop")
+        row.operator("addon.hide_show_box")
         box.row().operator("addon.hide_show_cropped")
 
         layout.separator()
