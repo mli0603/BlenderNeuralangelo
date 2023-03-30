@@ -494,6 +494,8 @@ old_box_offset = [0, 0, 0, 0, 0, 0]
 view_port = None
 point_cloud_vertices = None
 select_point_index = []
+radius = 0
+center = (0, 0, 0)
 
 
 # ------------------------------------------------------------------------
@@ -643,14 +645,14 @@ def generate_cropping_planes():
     text_object_zmax.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_zmax)
 
-    text_object_xmin.rotation_euler = (-math.radians(90), -math.radians(90), 0)
-    text_object_xmax.rotation_euler = (-math.radians(90), -math.radians(90), 0)
+    text_object_xmin.rotation_euler = (-math.radians(90), -math.radians(90), math.radians(90))
+    text_object_xmax.rotation_euler = (-math.radians(90), -math.radians(90), -math.radians(90))
 
-    text_object_ymin.rotation_euler = (0, 0, 0)
-    text_object_ymax.rotation_euler = (0, 0, 0)
+    text_object_ymin.rotation_euler = (-math.radians(90), 0, math.radians(180))
+    text_object_ymax.rotation_euler = (-math.radians(90), 0, 0)
 
-    text_object_zmin.rotation_euler = (-math.radians(90), 0, 0)
-    text_object_zmax.rotation_euler = (-math.radians(90), 0, 0)
+    text_object_zmin.rotation_euler = (-math.radians(180), 0, 0)
+    text_object_zmax.rotation_euler = (0, 0, 0)
 
     text_object_xmin.location = (x_min - 1, (y_max + y_min) / 2, (z_max + z_min) / 2)
     text_object_xmax.location = (x_max + 0.5, (y_max + y_min) / 2, (z_max + z_min) / 2)
@@ -755,26 +757,30 @@ def update_cropping_plane(self, context):
     text_object_ymax = bpy.data.objects['y_max_label']
     text_object_zmin = bpy.data.objects['z_min_label']
     text_object_zmax = bpy.data.objects['z_max_label']
-# update text location and rotation
+    # update text location and rotation
 
-    text_width=bpy.context.scene.objects['x_min_label'].dimensions[0]/2
+    text_width = bpy.context.scene.objects['x_min_label'].dimensions[0] / 2
 
     text_object_xmin.location = (x_min - x_min_change - 1, (y_max + y_max_change + y_min - y_min_change) / 2,
                                  (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
     text_object_xmax.location = (x_max + x_max_change + 0.5, (y_max + y_max_change + y_min - y_min_change) / 2,
                                  (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
 
-    text_object_ymin.location = ((x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_min - y_min_change - 1,
-                                 (z_max + z_max_change + z_min - z_min_change) / 2)
-    text_object_ymax.location = ((x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
-                                 (z_max + z_max_change + z_min - z_min_change) / 2)
+    text_object_ymin.location = (
+    (x_max + x_max_change + x_min - x_min_change) / 2 + text_width, y_min - y_min_change - 1,
+    (z_max + z_max_change + z_min - z_min_change) / 2)
+    text_object_ymax.location = (
+    (x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
+    (z_max + z_max_change + z_min - z_min_change) / 2)
 
     text_object_zmin.location = (
-    (x_max + x_max_change + x_min - x_min_change) / 2, (y_max + y_max_change + y_min - y_min_change) / 2,
-    z_min - z_min_change)
+        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
+        (y_max + y_max_change + y_min - y_min_change) / 2,
+        z_min - z_min_change - 1)
     text_object_zmax.location = (
-    (x_max + x_max_change + x_min - x_min_change) / 2, (y_max + y_max_change + y_min - y_min_change) / 2,
-    z_max + z_max_change + 0.5)
+        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
+        (y_max + y_max_change + y_min - y_min_change) / 2,
+        z_max + z_max_change + 1)
 
 
 def reset_my_slider_to_default():
@@ -1109,6 +1115,8 @@ class BoundSphere(Operator):
     def execute(self, context):
         global point_cloud_vertices
         global select_point_index
+        global radius
+        global center
 
         if bpy.context.active_object.mode == 'EDIT':
             bpy.ops.object.editmode_toggle()
@@ -1224,13 +1232,15 @@ class ExportSceneParameters(Operator):
 
     def execute(self, context):
         # TODO: write to json
-        scene_parameter = {}
-        # for parameter in bpy.context.scene.keys():
-        #     if not isinstance(bpy.context.scene[parameter],
-        #                       (bpy.types.PropertyGroup, bpy.types.Object, bpy.types.Material)):
-        #         scene_parameter[parameter] = bpy.context.scene[parameter]
+        global radius
+        global center
+        sphere_data = {
+            "Sphere Center": center,
+            "Sphere Radius": radius
+        }
+
         with open("scene_data.json", "w") as outputfile:
-            json.dump(scene_parameter, outputfile)
+            json.dump(sphere_data, outputfile)
         return {'FINISHED'}
 
 
