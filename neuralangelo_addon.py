@@ -1,8 +1,8 @@
 import collections
-import os
-import struct
 import json
 import math
+import os
+import struct
 from typing import Union
 
 import bmesh
@@ -339,7 +339,7 @@ def set_intrinsics_from_K_matrix(K: Union[np.ndarray, Matrix], image_width: int,
 
     K = Matrix(K)
 
-    cam = bpy.context.scene.objects['Camera'].data
+    cam = bpy.context.scene.objects['Input Camera'].data
 
     if abs(K[0][1]) > 1e-7:
         raise ValueError(f"Skew is not supported by blender and therefore "
@@ -431,7 +431,7 @@ def set_intrinsics_from_blender_params(lens: float = None, image_width: int = No
                       millimeters or as FOV in radians.
     """
 
-    cam = bpy.context.scene.objects['Camera'].data
+    cam = bpy.context.scene.objects['Input Camera'].data
 
     if lens_unit is not None:
         cam.lens_unit = lens_unit
@@ -873,6 +873,15 @@ def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_heig
     texture.image_user.keyframe_insert(data_path="frame_offset", frame=idx * inter_frames)
 
 
+def select_all_vert(obj_name):
+    if obj_name in bpy.data.objects:
+        obj = bpy.context.scene.objects[obj_name]
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_mode(type="VERT")
+        bpy.ops.mesh.select_all(action='SELECT')
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -922,9 +931,12 @@ class LoadCamera(Operator):
     bl_idname = "addon.load_camera"
 
     def execute(self, context):
-        for obj in bpy.data.cameras:
-            bpy.data.cameras.remove(obj)
-        for material in bpy.data.materials:  # TODO: let's only remove material for image plane
+        if 'Input Camera' in bpy.data.cameras:
+            camera = bpy.data.cameras['Input Camera']
+            bpy.data.cameras.remove(camera)
+
+        if 'Image Material' in bpy.data.materials:
+            material = bpy.data.materials['Image Material']
             bpy.data.materials.remove(material, do_unlink=True)
 
         global colmap_data
@@ -964,14 +976,14 @@ class LoadCamera(Operator):
         image_sequence.source = 'SEQUENCE'
 
         # Camera initialization
-        camera_data = bpy.data.cameras.new(name="Camera")
-        camera_object = bpy.data.objects.new(name="Camera", object_data=camera_data)
+        camera_data = bpy.data.cameras.new(name="Input Camera")
+        camera_object = bpy.data.objects.new(name="Input Camera", object_data=camera_data)
         bpy.context.scene.collection.objects.link(camera_object)
-        bpy.data.objects['Camera'].rotation_mode = 'QUATERNION'
+        bpy.data.objects['Input Camera'].rotation_mode = 'QUATERNION'
 
         set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]),
                                      int(image_height[0]))  # set intrinsic matrix
-        camera = bpy.context.scene.objects['Camera']
+        camera = bpy.context.scene.objects['Input Camera']
 
         # Image Plane Setting
         generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
@@ -990,7 +1002,11 @@ class LoadCamera(Operator):
             set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
             set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
 
+        # enable texture mode to visualize images
         enable_texture_mode()
+
+        # keep point cloud highlighted
+        select_all_vert('Point Cloud')
 
         return {'FINISHED'}
 
@@ -1096,10 +1112,7 @@ class Crop(Operator):
         for index in select_point_index[0]:
             bpy.data.objects['Point Cloud'].data.vertices[index].hide = False
 
-        if 'Point Cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['Point Cloud']
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode='EDIT')
+        select_all_vert('Point Cloud')
 
         return {'FINISHED'}
 
@@ -1111,13 +1124,15 @@ class BoundSphere(Operator):
 
     bl_label = "Create Bounding Sphere"
     bl_idname = "addon.add_bound_sphere"
+
     @classmethod
     def poll(cls, context):
         global select_point_index
         if select_point_index:
             return True
-        else :
+        else:
             return False
+
     def execute(self, context):
         global point_cloud_vertices
         global select_point_index
@@ -1176,10 +1191,7 @@ class BoundSphere(Operator):
         sphere_obj = bpy.data.objects.new("Bounding Sphere", sphere_mesh)
         bpy.context.scene.collection.objects.link(sphere_obj)
 
-        if 'Point Cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['Point Cloud']
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode='EDIT')
+        select_all_vert('Point Cloud')
 
         return {'FINISHED'}
 
@@ -1223,17 +1235,22 @@ class HideShowCroppedPoints(Operator):
     bl_idname = "addon.hide_show_cropped"
 
     @classmethod
-#    def poll(cls, context):
-#        return point_cloud_vertices is not None
     def poll(cls, context):
         global select_point_index
         if select_point_index:
             return True
-        else :
+        else:
             return False
+
     def execute(self, context):
-        bpy.ops.object.editmode_toggle()  # TODO: if uncropped, return error.
-        return {'FINISHED'}
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
+            bpy.context.view_layer.objects.active = obj
+            if obj.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            else:
+                bpy.ops.object.mode_set(mode='EDIT')
+            return {'FINISHED'}
 
 
 class ExportSceneParameters(Operator):
@@ -1252,9 +1269,18 @@ class ExportSceneParameters(Operator):
             "Sphere Radius": radius
         }
         file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
-        with open(file_path, "w") as outputfile:  # TODO: permission denied. Write to the path of input dir
+        with open(file_path, "w") as outputfile:
             json.dump(sphere_data, outputfile)
         return {'FINISHED'}
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
+        layout.row().label(text="Parameters exported to " + file_path)
 
 
 class HideShowImagePlane(Operator):
@@ -1277,15 +1303,11 @@ class HighlightPointcloud(Operator):
 
     @classmethod
     def poll(cls, context):
-        # do not enable when no point cloud is loaded and camera not created
-        return 'Point Cloud' in context.scene.collection.objects and 'Camera' in context.scene.collection.objects
+        # do not enable when point cloud is not loaded
+        return 'Point Cloud' in context.scene.collection.objects
 
     def execute(self, context):
-        # TODO: select all points
-        if 'Point Cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['Point Cloud']
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode='EDIT')
+        select_all_vert('Point Cloud')
         return {'FINISHED'}
 
 
