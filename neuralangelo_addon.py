@@ -1,12 +1,28 @@
+import collections
+import json
+import math
+import os
+import struct
+from typing import Union
+
+import bmesh
+import bpy
+import numpy as np
+from bpy.props import (StringProperty,
+                       BoolProperty,
+                       FloatProperty,
+                       FloatVectorProperty,
+                       PointerProperty,
+                       )
+from bpy.types import (Operator,
+                       PropertyGroup,
+                       )
+from mathutils import Matrix
+
 # ------------------------------------------------------------------------
 #    COLMAP code: https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
 # ------------------------------------------------------------------------
 
-import os
-import collections
-import numpy as np
-import struct
-import argparse
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
@@ -291,6 +307,171 @@ def rotmat2qvec(R):
     return qvec
 
 
+def transform(tvec, qvec):
+    Trans_Matrix = np.array([[1, 0, 0],
+                             [0, -1, 0],
+                             [0, 0, -1]])
+    R = qvec2rotmat(qvec)
+    tvec_blender = -np.dot(R.T, tvec)
+    rotation = np.dot(R.T, Trans_Matrix)
+    qvec_blender = rotmat2qvec(rotation)
+    return tvec_blender, qvec_blender
+
+
+# ------------------------------------------------------------------------
+#    Borrowed from BlenderProc:
+#    https://github.com/DLR-RM/BlenderProc
+# ------------------------------------------------------------------------
+def set_intrinsics_from_K_matrix(K: Union[np.ndarray, Matrix], image_width: int, image_height: int,
+                                 clip_start: float = None, clip_end: float = None):
+    """ Set the camera intrinsics via a K matrix.
+    The K matrix should have the format:
+        [[fx, 0, cx],
+         [0, fy, cy],
+         [0, 0,  1]]
+    This method is based on https://blender.stackexchange.com/a/120063.
+    :param K: The 3x3 K matrix.
+    :param image_width: The image width in pixels.
+    :param image_height: The image height in pixels.
+    :param clip_start: Clipping start.
+    :param clip_end: Clipping end.
+    """
+
+    K = Matrix(K)
+
+    cam = bpy.context.scene.objects['Input Camera'].data
+
+    if abs(K[0][1]) > 1e-7:
+        raise ValueError(f"Skew is not supported by blender and therefore "
+                         f"not by BlenderProc, set this to zero: {K[0][1]} and recalibrate")
+
+    fx, fy = K[0][0], K[1][1]
+    cx, cy = K[0][2], K[1][2]
+
+    # If fx!=fy change pixel aspect ratio
+    pixel_aspect_x = pixel_aspect_y = 1
+    if fx > fy:
+        pixel_aspect_y = fx / fy
+    elif fx < fy:
+        pixel_aspect_x = fy / fx
+
+    # Compute sensor size in mm and view in px
+    pixel_aspect_ratio = pixel_aspect_y / pixel_aspect_x
+    view_fac_in_px = get_view_fac_in_px(cam, pixel_aspect_x, pixel_aspect_y, image_width, image_height)
+    sensor_size_in_mm = get_sensor_size(cam)
+
+    # Convert focal length in px to focal length in mm
+    f_in_mm = fx * sensor_size_in_mm / view_fac_in_px
+
+    # Convert principal point in px to blenders internal format
+    shift_x = (cx - (image_width - 1) / 2) / -view_fac_in_px
+    shift_y = (cy - (image_height - 1) / 2) / view_fac_in_px * pixel_aspect_ratio
+
+    # Finally set all intrinsics
+    set_intrinsics_from_blender_params(f_in_mm, image_width, image_height, clip_start, clip_end, pixel_aspect_x,
+                                       pixel_aspect_y, shift_x, shift_y, "MILLIMETERS")
+
+
+def get_sensor_size(cam: bpy.types.Camera) -> float:
+    """ Returns the sensor size in millimeters based on the configured sensor_fit.
+    :param cam: The camera object.
+    :return: The sensor size in millimeters.
+    """
+    if cam.sensor_fit == 'VERTICAL':
+        sensor_size_in_mm = cam.sensor_height
+    else:
+        sensor_size_in_mm = cam.sensor_width
+    return sensor_size_in_mm
+
+
+def get_view_fac_in_px(cam: bpy.types.Camera, pixel_aspect_x: float, pixel_aspect_y: float,
+                       resolution_x_in_px: int, resolution_y_in_px: int) -> int:
+    """ Returns the camera view in pixels.
+    :param cam: The camera object.
+    :param pixel_aspect_x: The pixel aspect ratio along x.
+    :param pixel_aspect_y: The pixel aspect ratio along y.
+    :param resolution_x_in_px: The image width in pixels.
+    :param resolution_y_in_px: The image height in pixels.
+    :return: The camera view in pixels.
+    """
+    # Determine the sensor fit mode to use
+    if cam.sensor_fit == 'AUTO':
+        if pixel_aspect_x * resolution_x_in_px >= pixel_aspect_y * resolution_y_in_px:
+            sensor_fit = 'HORIZONTAL'
+        else:
+            sensor_fit = 'VERTICAL'
+    else:
+        sensor_fit = cam.sensor_fit
+
+    # Based on the sensor fit mode, determine the view in pixels
+    pixel_aspect_ratio = pixel_aspect_y / pixel_aspect_x
+    if sensor_fit == 'HORIZONTAL':
+        view_fac_in_px = resolution_x_in_px
+    else:
+        view_fac_in_px = pixel_aspect_ratio * resolution_y_in_px
+
+    return view_fac_in_px
+
+
+def set_intrinsics_from_blender_params(lens: float = None, image_width: int = None, image_height: int = None,
+                                       clip_start: float = None, clip_end: float = None,
+                                       pixel_aspect_x: float = None, pixel_aspect_y: float = None, shift_x: int = None,
+                                       shift_y: int = None, lens_unit: str = None):
+    """ Sets the camera intrinsics using blenders represenation.
+    :param lens: Either the focal length in millimeters or the FOV in radians, depending on the given lens_unit.
+    :param image_width: The image width in pixels.
+    :param image_height: The image height in pixels.
+    :param clip_start: Clipping start.
+    :param clip_end: Clipping end.
+    :param pixel_aspect_x: The pixel aspect ratio along x.
+    :param pixel_aspect_y: The pixel aspect ratio along y.
+    :param shift_x: The shift in x direction.
+    :param shift_y: The shift in y direction.
+    :param lens_unit: Either FOV or MILLIMETERS depending on whether the lens is defined as focal length in
+                      millimeters or as FOV in radians.
+    """
+
+    cam = bpy.context.scene.objects['Input Camera'].data
+
+    if lens_unit is not None:
+        cam.lens_unit = lens_unit
+
+    if lens is not None:
+        # Set focal length
+        if cam.lens_unit == 'MILLIMETERS':
+            if lens < 1:
+                raise Exception("The focal length is smaller than 1mm which is not allowed in blender: " + str(lens))
+            cam.lens = lens
+        elif cam.lens_unit == "FOV":
+            cam.angle = lens
+        else:
+            raise Exception("No such lens unit: " + lens_unit)
+
+    # Set resolution
+    if image_width is not None:
+        bpy.context.scene.render.resolution_x = image_width
+    if image_height is not None:
+        bpy.context.scene.render.resolution_y = image_height
+
+    # Set clipping
+    if clip_start is not None:
+        cam.clip_start = clip_start
+    if clip_end is not None:
+        cam.clip_end = clip_end
+
+    # Set aspect ratio
+    if pixel_aspect_x is not None:
+        bpy.context.scene.render.pixel_aspect_x = pixel_aspect_x
+    if pixel_aspect_y is not None:
+        bpy.context.scene.render.pixel_aspect_y = pixel_aspect_y
+
+    # Set shift
+    if shift_x is not None:
+        cam.shift_x = shift_x
+    if shift_y is not None:
+        cam.shift_y = shift_y
+
+
 # ------------------------------------------------------------------------
 #    AddOn code:
 #    useful tutorial: https://blender.stackexchange.com/questions/57306/how-to-create-a-custom-ui
@@ -304,30 +485,17 @@ bl_info = {
     "location": "PROPERTIES",
     "warning": "",  # used for warning icon and text in addons panel
     "support": "COMMUNITY",
-    "category": "Render"
+    "category": "Interface"
 }
 
-import bpy
-from bpy.props import (StringProperty,
-                       BoolProperty,
-                       IntProperty,
-                       FloatProperty,
-                       FloatVectorProperty,
-                       EnumProperty,
-                       PointerProperty,
-                       )
-from bpy.types import (Panel,
-                       Menu,
-                       Operator,
-                       PropertyGroup,
-                       )
-
-# global variable for easier access
+# global variables for easier access
 colmap_data = {}
 old_box_offset = [0, 0, 0, 0, 0, 0]
 view_port = None
-point_cloud_vertices = []
+point_cloud_vertices = None
 select_point_index = []
+radius = 0
+center = (0, 0, 0)
 
 
 # ------------------------------------------------------------------------
@@ -344,21 +512,72 @@ def display_pointcloud(points3D):
     rgbs = np.stack([point.rgb for point in points3D.values()])  # / 255.0
 
     # Copy the positions
-    ply_name = 'point cloud'
+    ply_name = 'Point Cloud'
     mesh = bpy.data.meshes.new(name=ply_name)
     mesh.vertices.add(xyzs.shape[0])
     mesh.vertices.foreach_set("co", [a for v in xyzs for a in v])
-
-    # Create our new object here
-    for ob in bpy.context.selected_objects:
-        ob.select_set(False)
     obj = bpy.data.objects.new(ply_name, mesh)
-    bpy.context.collection.objects.link(obj)
-    bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
+    bpy.context.scene.collection.objects.link(obj)
 
-    mesh.update()
-    mesh.validate()
+
+def generate_camera_plane(camera, image_width, image_height):
+    if 'Image Plane' in bpy.data.objects:
+        obj = bpy.context.scene.objects['Image Plane']
+        bpy.data.meshes.remove(obj.data, do_unlink=True)
+
+    bpy.context.view_layer.update()
+
+    # create a plane with 4 corners
+    verts = camera.data.view_frame()
+    faces = [[0, 1, 2, 3]]
+    msh = bpy.data.meshes.new('Image Plane')
+    msh.from_pydata(verts, [], faces)
+    obj = bpy.data.objects.new('Image Plane', msh)
+    bpy.context.scene.collection.objects.link(obj)
+
+    plane = bpy.context.scene.objects['Image Plane']
+
+    if 'Image Material' not in bpy.data.materials:
+        material = bpy.data.materials.new(name="Image Material")
+    else:
+        material = bpy.data.materials["Image Material"]
+
+    if len(plane.material_slots) == 0:
+        plane.data.materials.append(material)
+
+    material = plane.active_material
+    material.use_nodes = True
+
+    image_texture = material.node_tree.nodes.new(type='ShaderNodeTexImage')
+    principled_bsdf = material.node_tree.nodes.get('Principled BSDF')
+    material.node_tree.links.new(image_texture.outputs['Color'], principled_bsdf.inputs['Base Color'])
+
+    plane = bpy.context.scene.objects['Image Plane']
+    bpy.context.view_layer.objects.active = plane
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
+
+    # change each uv vertex
+    bm = bmesh.from_edit_mesh(plane.data)
+    uv_layer = bm.loops.layers.uv.active
+    for idx, v in enumerate(bm.verts):  # TODO: is there a way to automatically figure out the order?
+        for l in v.link_loops:
+            uv_data = l[uv_layer]
+            if idx == 0:
+                uv_data.uv[0] = 0.0
+                uv_data.uv[1] = 0.0
+            elif idx == 1:
+                uv_data.uv[0] = 0.0
+                uv_data.uv[1] = 1.0
+            elif idx == 2:
+                uv_data.uv[0] = 1.0
+                uv_data.uv[1] = 1.0
+            elif idx == 3:
+                uv_data.uv[0] = 1.0
+                uv_data.uv[1] = 0.0
+            break
+    bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def generate_cropping_planes():
@@ -390,17 +609,69 @@ def generate_cropping_planes():
              [0, 1, 2, 3],
              [4, 5, 6, 7]]
 
-    msh = bpy.data.meshes.new("cropping plane")
+    msh = bpy.data.meshes.new('Bounding Box')
     msh.from_pydata(verts, [], faces)
-    obj = bpy.data.objects.new("cropping plane", msh)
+    obj = bpy.data.objects.new('Bounding Box', msh)
     bpy.context.scene.collection.objects.link(obj)
+
+    # Add plane text
+    text_object_xmin = bpy.data.objects.new("x_min_label", bpy.data.curves.new(type="FONT", name="x_min"))
+    text_object_xmin.data.body = "x min"
+    text_object_xmin.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_xmin)
+
+    text_object_xmax = bpy.data.objects.new("x_max_label", bpy.data.curves.new(type="FONT", name="x_max"))
+    text_object_xmax.data.body = "x max"
+    text_object_xmax.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_xmax)
+
+    text_object_ymin = bpy.data.objects.new("y_min_label", bpy.data.curves.new(type="FONT", name="y_min"))
+    text_object_ymin.data.body = "y min"
+    text_object_ymin.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_ymin)
+
+    text_object_ymax = bpy.data.objects.new("y_max_label", bpy.data.curves.new(type="FONT", name="y_max"))
+    text_object_ymax.data.body = "y max"
+    text_object_ymax.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_ymax)
+
+    text_object_zmin = bpy.data.objects.new("z_min_label", bpy.data.curves.new(type="FONT", name="z_min"))
+    text_object_zmin.data.body = "z min"
+    text_object_zmin.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_zmin)
+
+    text_object_zmax = bpy.data.objects.new("z_max_label", bpy.data.curves.new(type="FONT", name="z_max"))
+    text_object_zmax.data.body = "z max"
+    text_object_zmax.data.size *= 2
+    bpy.context.scene.collection.objects.link(text_object_zmax)
+
+    text_object_xmin.rotation_euler = (-math.radians(90), -math.radians(90), math.radians(90))
+    text_object_xmax.rotation_euler = (-math.radians(90), -math.radians(90), -math.radians(90))
+
+    text_object_ymin.rotation_euler = (-math.radians(90), 0, math.radians(180))
+    text_object_ymax.rotation_euler = (-math.radians(90), 0, 0)
+
+    text_object_zmin.rotation_euler = (-math.radians(180), 0, 0)
+    text_object_zmax.rotation_euler = (0, 0, 0)
+
+    text_object_xmin.location = (x_min - 1, (y_max + y_min) / 2, (z_max + z_min) / 2)
+    text_object_xmax.location = (x_max + 0.5, (y_max + y_min) / 2, (z_max + z_min) / 2)
+
+    text_object_ymin.location = ((x_max + x_min) / 2, y_min - 1, (z_max + z_min) / 2)
+    text_object_ymax.location = ((x_max + x_min) / 2, y_max + 0.5, (z_max + z_min) / 2)
+
+    text_object_zmin.location = ((x_max + x_min) / 2, (y_max + y_min) / 2, z_min - 1)
+    text_object_zmax.location = ((x_max + x_min) / 2, (y_max + y_min) / 2, z_max + 0.5)
 
     return
 
 
-def update_cropping_plane(scene, depsgraph):
+def update_cropping_plane(self, context):
     global old_box_offset
     global point_cloud_vertices
+
+    if point_cloud_vertices is None:  # stop if point cloud vertices are not yet loaded
+        return
 
     max_coordinate = np.max(point_cloud_vertices, axis=0)
     min_coordinate = np.min(point_cloud_vertices, axis=0)
@@ -413,7 +684,7 @@ def update_cropping_plane(scene, depsgraph):
     z_max = max_coordinate[2]
 
     slider = bpy.context.scene.my_tool.box_slider
-    crop_plane = bpy.data.objects['cropping plane']
+    crop_plane = bpy.data.objects['Bounding Box']
 
     x_min_change = -slider[0]
     x_max_change = -slider[1]
@@ -422,22 +693,27 @@ def update_cropping_plane(scene, depsgraph):
     z_min_change = -slider[4]
     z_max_change = -slider[5]
 
-    if x_min_change != old_box_offset[0] and x_max + x_max_change < x_min - x_min_change:
+    if -x_min_change != old_box_offset[0] and x_max + x_max_change < x_min - x_min_change:
         x_min_change = x_min - (x_max + x_max_change)
         slider[0] = old_box_offset[0]
-    elif x_max_change != old_box_offset[1] and x_max + x_max_change < x_min - x_min_change:
+
+    elif -x_max_change != old_box_offset[1] and x_max + x_max_change < x_min - x_min_change:
         x_max_change = x_min - x_min_change - x_max
         slider[1] = old_box_offset[1]
-    elif y_min_change != old_box_offset[2] and y_max + y_max_change < y_min - y_min_change:
+
+    elif -y_min_change != old_box_offset[2] and y_max + y_max_change < y_min - y_min_change:
         y_min_change = y_min - (y_max + y_max_change)
         slider[2] = old_box_offset[2]
-    elif y_max_change != old_box_offset[3] and y_max + y_max_change < y_min - y_min_change:
+
+    elif -y_max_change != old_box_offset[3] and y_max + y_max_change < y_min - y_min_change:
         y_max_change = y_min - y_min_change - y_max
         slider[3] = old_box_offset[3]
-    elif z_min_change != old_box_offset[4] and z_max + z_max_change < z_min - z_min_change:
+
+    elif -z_min_change != old_box_offset[4] and z_max + z_max_change < z_min - z_min_change:
         z_min_change = z_min - (z_max + z_max_change)
         slider[4] = old_box_offset[4]
-    elif z_max_change != old_box_offset[5] and z_max + z_max_change < z_min - z_min_change:
+
+    elif -z_max_change != old_box_offset[5] and z_max + z_max_change < z_min - z_min_change:
         z_max_change = z_min - z_min_change - z_max
         slider[5] = old_box_offset[5]
 
@@ -475,6 +751,37 @@ def update_cropping_plane(scene, depsgraph):
     crop_plane.data.vertices[7].co.y = y_max + y_max_change
     crop_plane.data.vertices[7].co.z = z_max + z_max_change
 
+    text_object_xmin = bpy.data.objects['x_min_label']
+    text_object_xmax = bpy.data.objects['x_max_label']
+    text_object_ymin = bpy.data.objects['y_min_label']
+    text_object_ymax = bpy.data.objects['y_max_label']
+    text_object_zmin = bpy.data.objects['z_min_label']
+    text_object_zmax = bpy.data.objects['z_max_label']
+    # update text location and rotation
+
+    text_width = bpy.context.scene.objects['x_min_label'].dimensions[0] / 2
+
+    text_object_xmin.location = (x_min - x_min_change - 1, (y_max + y_max_change + y_min - y_min_change) / 2,
+                                 (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
+    text_object_xmax.location = (x_max + x_max_change + 0.5, (y_max + y_max_change + y_min - y_min_change) / 2,
+                                 (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
+
+    text_object_ymin.location = (
+        (x_max + x_max_change + x_min - x_min_change) / 2 + text_width, y_min - y_min_change - 1,
+        (z_max + z_max_change + z_min - z_min_change) / 2)
+    text_object_ymax.location = (
+        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
+        (z_max + z_max_change + z_min - z_min_change) / 2)
+
+    text_object_zmin.location = (
+        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
+        (y_max + y_max_change + y_min - y_min_change) / 2,
+        z_min - z_min_change - 1)
+    text_object_zmax.location = (
+        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
+        (y_max + y_max_change + y_min - y_min_change) / 2,
+        z_max + z_max_change + 1)
+
 
 def reset_my_slider_to_default():
     bpy.context.scene.my_tool.box_slider[0] = 0
@@ -492,16 +799,24 @@ def delete_bounding_sphere():
 
 
 # TODO: can this be cleaned up??
+# TODO: when loading, not set to solid mode??
 def switch_viewport_to_solid(self, context):
     toggle = context.scene.my_tool.transparency_toggle
-    #    view_port.shading.type='SOLID'
-    #    view_port.shading.show_xray=toggle
     for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':
             for space in area.spaces:
                 if space.type == 'VIEW_3D':
                     space.shading.type = 'SOLID'
                     space.shading.show_xray = toggle
+
+
+def enable_texture_mode():
+    # change color mode
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    space.shading.color_type = 'TEXTURE'
 
 
 def update_transparency(self, context):
@@ -511,6 +826,60 @@ def update_transparency(self, context):
                 if space.type == 'VIEW_3D':
                     alpha = context.scene.my_tool.transparency_slider
                     space.shading.xray_alpha = alpha
+
+
+def set_keyframe_camera(camera, qvec_old, tvec_old, idx, inter_frames):
+    # Set rotation and translation of Camera in each frame
+
+    tvec, qvec = transform(tvec_old, qvec_old)
+
+    camera.rotation_quaternion = qvec
+    camera.location = tvec
+
+    camera.keyframe_insert(data_path='location', frame=idx * inter_frames)
+    camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
+
+
+def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_height, intrinsic_matrix):
+    # Set vertices of image plane in each frame
+    bpy.context.view_layer.update()
+
+    world2camera = camera.matrix_world
+    camera_vert_origin = camera.data.view_frame()
+    # TODO: cache these computation
+    # four corners of image plane
+    corners = np.array([
+        [0, 0, 1],
+        [0, image_height, 1],
+        [image_width, image_height, 1],
+        [image_width, 0, 1]
+    ])
+    corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
+    for vert, corner in zip(camera_vert_origin, corners_3D):
+        vert[0] = corner[0]
+        vert[1] = corner[1]
+        vert[2] = -1.0  # blender coord
+    camera_verts = [world2camera @ v for v in camera_vert_origin]
+    plane_verts = plane.data.vertices
+
+    for i in range(4):
+        plane_verts[i].co = camera_verts[i]
+        plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
+
+    # Set image texture of image plane in each frame
+    material = plane.material_slots[0].material
+    texture = material.node_tree.nodes.get("Image Texture")
+    texture.image_user.frame_offset = idx - 1
+    texture.image_user.keyframe_insert(data_path="frame_offset", frame=idx * inter_frames)
+
+
+def select_all_vert(obj_name):
+    if obj_name in bpy.data.objects:
+        obj = bpy.context.scene.objects[obj_name]
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_mode(type="VERT")
+        bpy.ops.mesh.select_all(action='SELECT')
 
 
 # ------------------------------------------------------------------------
@@ -536,6 +905,7 @@ class MyProperties(PropertyGroup):
         min=0,
         max=20,
         default=(0, 0, 0, 0, 0, 0),
+        update=update_cropping_plane
     )
     transparency_slider: FloatProperty(
         name="Transparency",
@@ -548,41 +918,131 @@ class MyProperties(PropertyGroup):
     transparency_toggle: BoolProperty(
         name="",
         description="Toggle transparency",
-        default=True,
+        default=False,
         update=switch_viewport_to_solid
     )
-
-
-#    for area in bpy.context.screen.areas:
-#        if area.type == 'VIEW_3D':
-#            for space in area.spaces:
-#                if space.type == 'VIEW_3D':
-#                    global view_port
-#                    view_port = space
 
 
 # ------------------------------------------------------------------------
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
+class LoadCamera(Operator):
+    bl_label = "Load Poses and Images"
+    bl_idname = "addon.load_camera"
 
-class OT_LoadCOLMAP(Operator):
+    def execute(self, context):
+        if 'Input Camera' in bpy.data.cameras:
+            camera = bpy.data.cameras['Input Camera']
+            bpy.data.cameras.remove(camera)
+
+        if 'Image Material' in bpy.data.materials:
+            material = bpy.data.materials['Image Material']
+            bpy.data.materials.remove(material, do_unlink=True)
+
+        global colmap_data
+
+        # Load colmap data
+        intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
+        intrinsic_matrix = np.array([[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
+                                     [0, intrinsic_param[0][1], intrinsic_param[0][3]],
+                                     [0, 0, 1]])  # TODO: only supports single camera for now
+
+        image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
+        image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
+        image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
+        image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
+        camera_id = np.stack([img.camera_id for img in colmap_data['images'].values()]) - 1  # make it zero-indexed
+        image_names = np.stack([img.name for img in colmap_data['images'].values()])
+        num_image = image_names.shape[0]
+
+        # set start and end frame
+        context.scene.frame_start = 1
+        context.scene.frame_end = num_image
+
+        # Load image file
+        sort_image_id = np.argsort(image_names)
+        image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
+
+        file_name = []
+        for image_id in sort_image_id:
+            file_name.append({'name': image_names[image_id]})
+
+        bpy.ops.image.open(filepath=image_folder_path,
+                           directory=image_folder_path,
+                           files=file_name,
+                           relative_path=True, show_multiview=False)
+
+        image_sequence = bpy.data.images[file_name[0]['name']]  # sequence named after the first image filename
+        image_sequence.source = 'SEQUENCE'
+
+        # Camera initialization
+        camera_data = bpy.data.cameras.new(name="Input Camera")
+        camera_object = bpy.data.objects.new(name="Input Camera", object_data=camera_data)
+        bpy.context.scene.collection.objects.link(camera_object)
+        bpy.data.objects['Input Camera'].rotation_mode = 'QUATERNION'
+
+        set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]),
+                                     int(image_height[0]))  # set intrinsic matrix
+        camera = bpy.context.scene.objects['Input Camera']
+
+        # Image Plane Setting
+        generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
+        plane = bpy.context.scene.objects['Image Plane']
+
+        plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_auto_refresh = True
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_duration = 1
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
+        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
+
+        # Setting Camera & Image Plane frame data
+        for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
+            frame_id = idx + 1  # one-indexed
+            set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
+            set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
+
+        # enable texture mode to visualize images
+        enable_texture_mode()
+
+        # keep point cloud highlighted
+        select_all_vert('Point Cloud')
+
+        return {'FINISHED'}
+
+
+class LoadCOLMAP(Operator):
+    '''
+    Load colmap data given file directory, setting up bounding box, set camera parameters and load images
+    '''
     bl_label = "Load COLMAP Data"
-    bl_idname = "my.load_colmap"
+    bl_idname = "addon.load_colmap"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.my_tool.colmap_path != ''
 
     def execute(self, context):
         scene = context.scene
         mytool = scene.my_tool
 
-        for obj in bpy.context.scene.objects:
-            if obj.name != 'Camera':
-                bpy.data.meshes.remove(obj.data, do_unlink=True)
+        # remove all objects
+        for mesh in bpy.data.meshes:
+            bpy.data.meshes.remove(mesh, do_unlink=True)
+        for camera in bpy.data.cameras:
+            bpy.data.cameras.remove(camera)
+        for light in bpy.data.lights:
+            bpy.data.lights.remove(light)
+        for material in bpy.data.materials:
+            bpy.data.materials.remove(material, do_unlink=True)
+        for image in bpy.data.images:
+            bpy.data.images.remove(image, do_unlink=True)
+        for curve in bpy.data.curves:
+            bpy.data.curves.remove(curve, do_unlink=True)
 
-        print("loading data")
-
+        # load data
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
-
-        print("store colmap data")
 
         global colmap_data
         global point_cloud_vertices
@@ -593,33 +1053,10 @@ class OT_LoadCOLMAP(Operator):
 
         point_cloud_vertices = np.stack([point.xyz for point in points3D.values()])
 
+        # generate bounding boxes for cropping
         generate_cropping_planes()
         reset_my_slider_to_default()
-
-        print("TODO: set camera intrinsics")
-
-        print("TODO: set camera poses")
-
-        print("TODO: load images")
-
-        return {'FINISHED'}
-
-
-class OT_Debug(Operator):
-    '''
-    for easier debugging experience
-    '''
-
-    bl_label = "Debug"
-    bl_idname = "my.debug"
-
-    def execute(self, context):
-        scene = context.scene
-        mytool = scene.my_tool
-
-        print(len(colmap_data['cameras'].keys()))
-        print(len(colmap_data['images'].keys()))
-        print(len(colmap_data['points3D'].keys()))
+        # update_cropping_plane(bpy.context.scene)
 
         return {'FINISHED'}
 
@@ -634,17 +1071,23 @@ class Crop(Operator):
     '''
 
     bl_label = "Crop Pointcloud"
-    bl_idname = "my.crop"
+    bl_idname = "addon.crop"
+
+    @classmethod
+    def poll(cls, context):
+        global point_cloud_vertices
+        return point_cloud_vertices is not None
 
     def execute(self, context):
-        if bpy.context.active_object.mode == 'EDIT':
-            bpy.ops.object.editmode_toggle()
-        delete_bounding_sphere()
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='OBJECT')
 
         global point_cloud_vertices
         global select_point_index
 
-        box_verts = np.array([v.co for v in bpy.data.objects['cropping plane'].data.vertices])
+        box_verts = np.array([v.co for v in bpy.data.objects['Bounding Box'].data.vertices])
 
         max_coordinate = np.max(box_verts, axis=0)
         min_coordinate = np.min(box_verts, axis=0)
@@ -657,9 +1100,8 @@ class Crop(Operator):
         z_max = max_coordinate[2]
 
         # initialization
-        mesh = bpy.data.objects['point cloud'].data
+        mesh = bpy.data.objects['Point Cloud'].data
         mesh.vertices.foreach_set("hide", [True] * len(mesh.vertices))
-        print(np.where(point_cloud_vertices[:, 0] > 1))
         select_point_index = np.where((point_cloud_vertices[:, 0] >= x_min) &
                                       (point_cloud_vertices[:, 0] <= x_max) &
                                       (point_cloud_vertices[:, 1] >= y_min) &
@@ -668,12 +1110,9 @@ class Crop(Operator):
                                       (point_cloud_vertices[:, 2] <= z_max))
 
         for index in select_point_index[0]:
-            bpy.data.objects['point cloud'].data.vertices[index].hide = False
+            bpy.data.objects['Point Cloud'].data.vertices[index].hide = False
 
-        if 'point cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['point cloud']
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode='EDIT')
+        select_all_vert('Point Cloud')
 
         return {'FINISHED'}
 
@@ -684,14 +1123,22 @@ class BoundSphere(Operator):
     '''
 
     bl_label = "Create Bounding Sphere"
-    bl_idname = "my.add_bound_sphere"
+    bl_idname = "addon.add_bound_sphere"
+
+    @classmethod
+    def poll(cls, context):
+        global select_point_index
+        if select_point_index:
+            return True
+        else:
+            return False
 
     def execute(self, context):
         global point_cloud_vertices
         global select_point_index
+        global radius
+        global center
 
-        if bpy.context.active_object.mode == 'EDIT':
-            bpy.ops.object.editmode_toggle()
         delete_bounding_sphere()
 
         unhide_verts = point_cloud_vertices[select_point_index]
@@ -710,9 +1157,8 @@ class BoundSphere(Operator):
         center_y = (y_min + y_max) / 2
         center_z = (z_min + z_max) / 2
 
-        Radius = max(np.sqrt((unhide_verts[i, 0] - center_x) ** 2 + (unhide_verts[i, 1] - center_y) ** 2 + (
-                    unhide_verts[i, 2] - center_z) ** 2) for i in
-                     range(np.shape(unhide_verts)[0]))
+        radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
+                unhide_verts[:, 2] - center_z) ** 2))
         center = (center_x, center_y, center_z)
 
         num_segments = 128
@@ -721,8 +1167,8 @@ class BoundSphere(Operator):
 
         for i in range(num_segments):
             theta1 = i * 2 * np.pi / num_segments
-            z = Radius * np.sin(theta1)
-            xy = Radius * np.cos(theta1)
+            z = radius * np.sin(theta1)
+            xy = radius * np.cos(theta1)
             for j in range(num_segments):
                 theta2 = j * 2 * np.pi / num_segments
                 x = xy * np.sin(theta2)
@@ -745,27 +1191,38 @@ class BoundSphere(Operator):
         sphere_obj = bpy.data.objects.new("Bounding Sphere", sphere_mesh)
         bpy.context.scene.collection.objects.link(sphere_obj)
 
-        if 'point cloud' in bpy.data.objects:
-            obj = bpy.context.scene.objects['point cloud']
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode='EDIT')
+        select_all_vert('Point Cloud')
 
         return {'FINISHED'}
 
 
 class HideShowBox(Operator):
     bl_label = "Hide/Show Bounding Box"
-    bl_idname = "my.hide_show_box"
+    bl_idname = "addon.hide_show_box"
+
+    @classmethod
+    def poll(cls, context):
+        return point_cloud_vertices is not None
 
     def execute(self, context):
-        status = bpy.context.scene.objects['cropping plane'].hide_get()
-        bpy.context.scene.objects['cropping plane'].hide_set(not status)
+        status = bpy.context.scene.objects['Bounding Box'].hide_get()
+        bpy.context.scene.objects['Bounding Box'].hide_set(not status)
+        bpy.context.scene.objects['x_max_label'].hide_set(not status)
+        bpy.context.scene.objects['x_min_label'].hide_set(not status)
+        bpy.context.scene.objects['y_max_label'].hide_set(not status)
+        bpy.context.scene.objects['y_min_label'].hide_set(not status)
+        bpy.context.scene.objects['z_max_label'].hide_set(not status)
+        bpy.context.scene.objects['z_min_label'].hide_set(not status)
         return {'FINISHED'}
 
 
 class HideShowSphere(Operator):
     bl_label = "Hide/Show Bounding Sphere"
-    bl_idname = "my.hide_show_sphere"
+    bl_idname = "addon.hide_show_sphere"
+
+    @classmethod
+    def poll(cls, context):
+        return 'Bounding Sphere' in context.scene.collection.objects
 
     def execute(self, context):
         status = bpy.context.scene.objects['Bounding Sphere'].hide_get()
@@ -773,12 +1230,84 @@ class HideShowSphere(Operator):
         return {'FINISHED'}
 
 
-class ReviewCloud(Operator):
-    bl_label = "Review\Hide Point Cloud"
-    bl_idname = "my.review_cloud"
+class HideShowCroppedPoints(Operator):
+    bl_label = "Hide/Show Cropped Points"
+    bl_idname = "addon.hide_show_cropped"
+
+    @classmethod
+    def poll(cls, context):
+        global select_point_index
+        if select_point_index:
+            return True
+        else:
+            return False
 
     def execute(self, context):
-        bpy.ops.object.editmode_toggle()
+        if 'Point Cloud' in bpy.data.objects:
+            obj = bpy.context.scene.objects['Point Cloud']
+            bpy.context.view_layer.objects.active = obj
+            if obj.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            else:
+                bpy.ops.object.mode_set(mode='EDIT')
+            return {'FINISHED'}
+
+
+class ExportSceneParameters(Operator):
+    bl_label = "Export Scene Parameters"
+    bl_idname = "addon.export_scene_param"
+
+    @classmethod
+    def poll(cls, context):
+        return 'Bounding Sphere' in context.scene.collection.objects
+
+    def execute(self, context):
+        global radius
+        global center
+        sphere_data = {
+            "Sphere Center": center,
+            "Sphere Radius": radius
+        }
+        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
+        with open(file_path, "w") as outputfile:
+            json.dump(sphere_data, outputfile)
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
+        layout.row().label(text="Parameters exported to " + file_path)
+
+
+class HideShowImagePlane(Operator):
+    bl_label = "Hide/Show Image Plane"
+    bl_idname = "addon.hide_show_cam_plane"
+
+    @classmethod
+    def poll(cls, context):
+        return 'Image Plane' in context.scene.collection.objects
+
+    def execute(self, context):
+        status = bpy.context.scene.objects['Image Plane'].hide_get()
+        bpy.context.scene.objects['Image Plane'].hide_set(not status)
+        return {'FINISHED'}
+
+
+class HighlightPointcloud(Operator):
+    bl_label = "Highlight Pointcloud"
+    bl_idname = "addon.highlight_pointcloud"
+
+    @classmethod
+    def poll(cls, context):
+        # do not enable when point cloud is not loaded
+        return 'Point Cloud' in context.scene.collection.objects
+
+    def execute(self, context):
+        select_all_vert('Point Cloud')
         return {'FINISHED'}
 
 
@@ -793,15 +1322,24 @@ class NeuralangeloCustomPanel(bpy.types.Panel):
 
 
 class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_idname = "panel_main"
+    bl_idname = "BN_PT_main"
     bl_label = "Neuralangelo Addon"
 
     def draw(self, context):
+        scene = context.scene
         layout = self.layout
+        mytool = scene.my_tool
+
+        row = layout.row(align=True)
+        row.prop(mytool, "transparency_toggle")
+        sub = row.row()
+        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency of Objects')
+        sub.enabled = mytool.transparency_toggle
 
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id = "panel_main"
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_loading"
     bl_label = "Load Data"
 
     def draw(self, context):
@@ -810,13 +1348,13 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         mytool = scene.my_tool
 
         layout.prop(mytool, "colmap_path")
-        layout.operator("my.load_colmap")
-        layout.operator("my.debug")
+        layout.operator("addon.load_colmap")
         layout.separator()
 
 
 class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id = "panel_main"
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_bounding"
     bl_label = "Define Bounding Region"
 
     def draw(self, context):
@@ -824,38 +1362,60 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout = self.layout
         mytool = scene.my_tool
 
-        row = layout.row()
+        # bounding box
+        box = layout.box()
+        row = box.row()
         row.alignment = 'CENTER'
-        row.label(text="Edit bounding box")
+        row.label(text="Edit Bounding Box")
 
-        row = layout.row(align=True)
-        row.prop(mytool, "transparency_toggle")
-        sub = row.row()
-        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency')
-        sub.enabled = mytool.transparency_toggle
-        layout.separator()
-
-        layout.row().operator("my.hide_show_box")
-        layout.row().operator("my.crop")
-
-        x_row = layout.row()
+        x_row = box.row()
         x_row.prop(mytool, "box_slider", index=0, slider=True, text='X min')
         x_row.prop(mytool, "box_slider", index=1, slider=True, text='X max')
 
-        y_row = layout.row()
+        y_row = box.row()
         y_row.prop(mytool, "box_slider", index=2, slider=True, text='Y min')
         y_row.prop(mytool, "box_slider", index=3, slider=True, text='Y max')
 
-        z_row = layout.row()
+        z_row = box.row()
         z_row.prop(mytool, "box_slider", index=4, slider=True, text='Z min')
         z_row.prop(mytool, "box_slider", index=5, slider=True, text='Z max')
+
+        box.separator()
+        row = box.row()
+        row.operator("addon.crop")
+        box.row().operator("addon.hide_show_box")
+        row.operator("addon.hide_show_cropped")
+
         layout.separator()
 
-        layout.operator("my.add_bound_sphere")
-        layout.row().operator("my.hide_show_sphere")
-        layout.separator()
+        # bounding sphere
+        box = layout.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="Create Bounding Sphere")
+        box.row().operator("addon.add_bound_sphere")
+        box.row().operator("addon.hide_show_sphere")
+        box.row().operator('addon.export_scene_param')
 
-        layout.operator("my.review_cloud")
+
+class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_camera"
+    bl_label = "Inspect Camera Poses"
+
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        mytool = scene.my_tool
+
+        box = layout.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="Load Camera Data")
+        row = box.row()
+        row.operator("addon.load_camera")
+        row.operator("addon.hide_show_cam_plane")
+        box.row().operator("addon.highlight_pointcloud")
 
 
 # ------------------------------------------------------------------------
@@ -864,16 +1424,20 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 
 classes = (
     MyProperties,
-    OT_LoadCOLMAP,
-    OT_Debug,
+    LoadCOLMAP,
     MainPanel,
     LoadingPanel,
     BoundingPanel,
+    CameraPanel,
     Crop,
     BoundSphere,
     HideShowBox,
     HideShowSphere,
-    ReviewCloud
+    HideShowCroppedPoints,
+    LoadCamera,
+    HideShowImagePlane,
+    ExportSceneParameters,
+    HighlightPointcloud
 )
 
 
@@ -883,7 +1447,6 @@ def register():
         register_class(cls)
 
     bpy.types.Scene.my_tool = PointerProperty(type=MyProperties)
-    bpy.app.handlers.depsgraph_update_post.append(update_cropping_plane)
 
 
 def unregister():
@@ -891,9 +1454,7 @@ def unregister():
     for cls in reversed(classes):
         unregister_class(cls)
     del bpy.types.Scene.my_tool
-    bpy.app.handlers.depsgraph_update_post.remove(update_cropping_plane)
 
 
 if __name__ == "__main__":
     register()
-
