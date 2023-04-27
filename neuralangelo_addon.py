@@ -17,7 +17,7 @@ from bpy.props import (StringProperty,
 from bpy.types import (Operator,
                        PropertyGroup,
                        )
-from mathutils import Matrix, Vector
+from mathutils import Matrix
 
 # ------------------------------------------------------------------------
 #    COLMAP code: https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
@@ -783,29 +783,6 @@ def update_cropping_plane(self, context):
         z_max + z_max_change + 1)
 
 
-def update_depth(self, context):
-    depth_coef = bpy.context.scene.my_tool.imagedepth_slider
-    #    scale_coef = depth_coef+1
-
-    bpy.context.view_layer.update()
-    camera = bpy.context.scene.objects['Camera']
-    plane = bpy.context.scene.objects['Image Plane']
-
-    lens = camera.data.lens
-    scale_coef = (lens + depth_coef * 200) / lens  # not sure the exact scale coefficient
-
-    translation = np.array([0, 0, -depth_coef, 1])
-    world2camera = camera.matrix_world
-    translation = np.dot(world2camera, translation)
-
-    translation_camera = np.array([world2camera[0][3], world2camera[1][3], world2camera[2][3]])
-    translation_camera *= scale_coef
-    translation = Vector(translation[0:3]) - Vector(translation_camera)
-
-    plane.scale = Vector([scale_coef, scale_coef, scale_coef])
-    plane.location = translation
-
-
 def reset_my_slider_to_default():
     bpy.context.scene.my_tool.box_slider[0] = 0
     bpy.context.scene.my_tool.box_slider[1] = 0
@@ -934,14 +911,6 @@ class MyProperties(PropertyGroup):
         description="Toggle transparency",
         default=False,
         update=switch_viewport_to_solid
-    )
-    imagedepth_slider: FloatProperty(
-        name="Image Depth",
-        description="Depth",
-        min=0,
-        max=10,
-        default=0,
-        update=update_depth
     )
 
 
@@ -1142,15 +1111,13 @@ class BoundSphere(Operator):
 
     bl_label = "Create Bounding Sphere"
     bl_idname = "addon.add_bound_sphere"
-
     @classmethod
     def poll(cls, context):
         global select_point_index
         if select_point_index:
             return True
-        else:
+        else :
             return False
-
     def execute(self, context):
         global point_cloud_vertices
         global select_point_index
@@ -1256,15 +1223,14 @@ class HideShowCroppedPoints(Operator):
     bl_idname = "addon.hide_show_cropped"
 
     @classmethod
-    #    def poll(cls, context):
-    #        return point_cloud_vertices is not None
+#    def poll(cls, context):
+#        return point_cloud_vertices is not None
     def poll(cls, context):
         global select_point_index
         if select_point_index:
             return True
-        else:
+        else :
             return False
-
     def execute(self, context):
         bpy.ops.object.editmode_toggle()  # TODO: if uncropped, return error.
         return {'FINISHED'}
@@ -1428,7 +1394,6 @@ class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row.operator("addon.load_camera")
         row.operator("addon.hide_show_cam_plane")
         box.row().operator("addon.highlight_pointcloud")
-        box.row().prop(mytool, "imagedepth_slider", slider=True, text='Depth of image eplane')
 
 
 # ------------------------------------------------------------------------
@@ -1471,4 +1436,3 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
