@@ -307,13 +307,13 @@ def rotmat2qvec(R):
     return qvec
 
 
-def transform(tvec, qvec):
-    Trans_Matrix = np.array([[1, 0, 0],
-                             [0, -1, 0],
-                             [0, 0, -1]])
-    R = qvec2rotmat(qvec)
-    tvec_blender = -np.dot(R.T, tvec)
-    rotation = np.dot(R.T, Trans_Matrix)
+def convert_to_blender_coord(tvec_w2c, qvec_w2c):
+    cv2blender = np.array([[1, 0, 0],
+                           [0, -1, 0],
+                           [0, 0, -1]])
+    R = qvec2rotmat(qvec_w2c)
+    tvec_blender = -np.dot(R.T, tvec_w2c)
+    rotation = np.dot(R.T, cv2blender)
     qvec_blender = rotmat2qvec(rotation)
     return tvec_blender, qvec_blender
 
@@ -828,10 +828,10 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe_camera(camera, qvec_old, tvec_old, idx, inter_frames):
+def set_keyframe_camera(camera, qvec_w2c, tvec_w2c, idx, inter_frames):
     # Set rotation and translation of Camera in each frame
 
-    tvec, qvec = transform(tvec_old, qvec_old)
+    tvec, qvec = convert_to_blender_coord(tvec_w2c, qvec_w2c)
 
     camera.rotation_quaternion = qvec
     camera.location = tvec
@@ -882,6 +882,85 @@ def select_all_vert(obj_name):
         bpy.ops.mesh.select_all(action='SELECT')
 
 
+def load_camera(colmap_data, context):
+    if 'Input Camera' in bpy.data.cameras:
+        camera = bpy.data.cameras['Input Camera']
+        bpy.data.cameras.remove(camera)
+
+    if 'Image Material' in bpy.data.materials:
+        material = bpy.data.materials['Image Material']
+        bpy.data.materials.remove(material, do_unlink=True)
+
+    # Load colmap data
+    intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
+    intrinsic_matrix = np.array([[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
+                                 [0, intrinsic_param[0][1], intrinsic_param[0][3]],
+                                 [0, 0, 1]])  # TODO: only supports single camera for now
+
+    image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
+    image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
+    image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
+    image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
+    camera_id = np.stack([img.camera_id for img in colmap_data['images'].values()]) - 1  # make it zero-indexed
+    image_names = np.stack([img.name for img in colmap_data['images'].values()])
+    num_image = image_names.shape[0]
+
+    # set start and end frame
+    context.scene.frame_start = 1
+    context.scene.frame_end = num_image
+
+    # Load image file
+    sort_image_id = np.argsort(image_names)
+    image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
+
+    file_name = []
+    for image_id in sort_image_id:
+        file_name.append({'name': image_names[image_id]})
+
+    bpy.ops.image.open(filepath=image_folder_path,
+                       directory=image_folder_path,
+                       files=file_name,
+                       relative_path=True, show_multiview=False)
+
+    image_sequence = bpy.data.images[file_name[0]['name']]  # sequence named after the first image filename
+    image_sequence.source = 'SEQUENCE'
+
+    # Camera initialization
+    camera_data = bpy.data.cameras.new(name="Input Camera")
+    camera_object = bpy.data.objects.new(name="Input Camera", object_data=camera_data)
+    bpy.context.scene.collection.objects.link(camera_object)
+    bpy.data.objects['Input Camera'].rotation_mode = 'QUATERNION'
+
+    set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]),
+                                 int(image_height[0]))  # set intrinsic matrix
+    camera = bpy.context.scene.objects['Input Camera']
+
+    # Image Plane Setting
+    generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
+    plane = bpy.context.scene.objects['Image Plane']
+
+    plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
+    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
+    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_auto_refresh = True
+    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_duration = 1
+    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
+    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
+
+    # Setting Camera & Image Plane frame data
+    for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
+        frame_id = idx + 1  # one-indexed
+        set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
+        set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
+
+    # enable texture mode to visualize images
+    enable_texture_mode()
+
+    # keep point cloud highlighted
+    select_all_vert('Point Cloud')
+
+    return
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -926,89 +1005,6 @@ class MyProperties(PropertyGroup):
 # ------------------------------------------------------------------------
 #    Operators, i.e, buttons + callback
 # ------------------------------------------------------------------------
-class LoadCamera(Operator):
-    bl_label = "Load Poses and Images"
-    bl_idname = "addon.load_camera"
-
-    def execute(self, context):
-        if 'Input Camera' in bpy.data.cameras:
-            camera = bpy.data.cameras['Input Camera']
-            bpy.data.cameras.remove(camera)
-
-        if 'Image Material' in bpy.data.materials:
-            material = bpy.data.materials['Image Material']
-            bpy.data.materials.remove(material, do_unlink=True)
-
-        global colmap_data
-
-        # Load colmap data
-        intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
-        intrinsic_matrix = np.array([[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
-                                     [0, intrinsic_param[0][1], intrinsic_param[0][3]],
-                                     [0, 0, 1]])  # TODO: only supports single camera for now
-
-        image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
-        image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
-        image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
-        image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
-        camera_id = np.stack([img.camera_id for img in colmap_data['images'].values()]) - 1  # make it zero-indexed
-        image_names = np.stack([img.name for img in colmap_data['images'].values()])
-        num_image = image_names.shape[0]
-
-        # set start and end frame
-        context.scene.frame_start = 1
-        context.scene.frame_end = num_image
-
-        # Load image file
-        sort_image_id = np.argsort(image_names)
-        image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
-
-        file_name = []
-        for image_id in sort_image_id:
-            file_name.append({'name': image_names[image_id]})
-
-        bpy.ops.image.open(filepath=image_folder_path,
-                           directory=image_folder_path,
-                           files=file_name,
-                           relative_path=True, show_multiview=False)
-
-        image_sequence = bpy.data.images[file_name[0]['name']]  # sequence named after the first image filename
-        image_sequence.source = 'SEQUENCE'
-
-        # Camera initialization
-        camera_data = bpy.data.cameras.new(name="Input Camera")
-        camera_object = bpy.data.objects.new(name="Input Camera", object_data=camera_data)
-        bpy.context.scene.collection.objects.link(camera_object)
-        bpy.data.objects['Input Camera'].rotation_mode = 'QUATERNION'
-
-        set_intrinsics_from_K_matrix(intrinsic_matrix, int(image_width[0]),
-                                     int(image_height[0]))  # set intrinsic matrix
-        camera = bpy.context.scene.objects['Input Camera']
-
-        # Image Plane Setting
-        generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
-        plane = bpy.context.scene.objects['Image Plane']
-
-        plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
-        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
-        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_auto_refresh = True
-        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_duration = 1
-        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
-        bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
-
-        # Setting Camera & Image Plane frame data
-        for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
-            frame_id = idx + 1  # one-indexed
-            set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
-            set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
-
-        # enable texture mode to visualize images
-        enable_texture_mode()
-
-        # keep point cloud highlighted
-        select_all_vert('Point Cloud')
-
-        return {'FINISHED'}
 
 
 class LoadCOLMAP(Operator):
@@ -1044,9 +1040,9 @@ class LoadCOLMAP(Operator):
         cameras, images, points3D = read_model(bpy.path.abspath(mytool.colmap_path + 'sparse/'), ext='.bin')
         display_pointcloud(points3D)
 
-        global colmap_data
-        global point_cloud_vertices
+        global colmap_data, point_cloud_vertices
 
+        colmap_data = {}
         colmap_data['cameras'] = cameras
         colmap_data['images'] = images
         colmap_data['points3D'] = points3D
@@ -1056,7 +1052,9 @@ class LoadCOLMAP(Operator):
         # generate bounding boxes for cropping
         generate_cropping_planes()
         reset_my_slider_to_default()
-        # update_cropping_plane(bpy.context.scene)
+
+        # load camera info
+        load_camera(colmap_data, context)
 
         return {'FINISHED'}
 
@@ -1262,15 +1260,68 @@ class ExportSceneParameters(Operator):
         return 'Bounding Sphere' in context.scene.collection.objects
 
     def execute(self, context):
-        global radius
-        global center
-        sphere_data = {
-            "Sphere Center": center,
-            "Sphere Radius": radius
+        global radius, center, colmap_data
+        intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
+        fl_x = intrinsic_param[0][0]  # TODO: only supports single camera for now
+        fl_y = intrinsic_param[0][1]
+        cx = intrinsic_param[0][2]
+        cy = intrinsic_param[0][3]
+        image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
+        image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
+        w = image_width[0]
+        h = image_height[0]
+
+        angle_x = math.atan(w / (fl_x * 2)) * 2
+        angle_y = math.atan(h / (fl_y * 2)) * 2
+
+        out = {
+            "camera_angle_x": angle_x,
+            "camera_angle_y": angle_y,
+            "fl_x": fl_x,
+            "fl_y": fl_y,
+            "k1": 0.0,  # take undistorted images only
+            "k2": 0.0,
+            "k3": 0.0,
+            "k4": 0.0,
+            "p1": 0.0,
+            "p2": 0.0,
+            "is_fisheye": False,  # TODO: not supporting fish eye camera
+            "cx": cx,
+            "cy": cy,
+            "w": int(w),
+            "h": int(h),
+            "aabb_scale": 1.0, # unit sphere
+            "scene_center": center,
+            "scene_radius": radius,
+            "frames": []
         }
-        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
+
+        flip_mat = np.array([
+            [1, 0, 0, 0],
+            [0, -1, 0, 0],
+            [0, 0, -1, 0],
+            [0, 0, 0, 1]
+        ])
+
+        path = bpy.context.scene.my_tool.colmap_path
+
+        # read poses
+        for img in colmap_data['images'].values():
+            rotation = qvec2rotmat(img.qvec)
+            translation = (img.tvec - center) / radius
+            translation = translation.reshape(3, 1)
+            w2c = np.concatenate([rotation, translation], 1)
+            w2c = np.concatenate([w2c, np.array([0, 0, 0, 1])[None]], 0)
+            c2w = np.linalg.inv(w2c)
+            c2w = c2w @ flip_mat  # convert to GL convention used in NGP
+
+            frame = {"file_path": path + '/images/' + img.name, "transform_matrix": c2w.tolist()}
+            # print(frame)
+            out["frames"].append(frame)
+
+        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'transforms.json')
         with open(file_path, "w") as outputfile:
-            json.dump(sphere_data, outputfile)
+            json.dump(out, outputfile, indent=2)
         return {'FINISHED'}
 
     def invoke(self, context, event):
@@ -1279,7 +1330,7 @@ class ExportSceneParameters(Operator):
 
     def draw(self, context):
         layout = self.layout
-        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'sphere_data.json')
+        file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'transforms.json')
         layout.row().label(text="Parameters exported to " + file_path)
 
 
@@ -1401,7 +1452,7 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
 class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_parent_id = "BN_PT_main"
     bl_idname = "BN_PT_camera"
-    bl_label = "Inspect Camera Poses"
+    bl_label = "Inspect COLMAP Results"
 
     def draw(self, context):
         scene = context.scene
@@ -1411,10 +1462,7 @@ class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         box = layout.box()
         row = box.row()
         row.alignment = 'CENTER'
-        row.label(text="Load Camera Data")
-        row = box.row()
-        row.operator("addon.load_camera")
-        row.operator("addon.hide_show_cam_plane")
+        box.row().operator("addon.hide_show_cam_plane")
         box.row().operator("addon.highlight_pointcloud")
 
 
@@ -1427,14 +1475,13 @@ classes = (
     LoadCOLMAP,
     MainPanel,
     LoadingPanel,
-    BoundingPanel,
     CameraPanel,
+    BoundingPanel,
     Crop,
     BoundSphere,
     HideShowBox,
     HideShowSphere,
     HideShowCroppedPoints,
-    LoadCamera,
     HideShowImagePlane,
     ExportSceneParameters,
     HighlightPointcloud
