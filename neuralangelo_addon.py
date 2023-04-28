@@ -17,7 +17,7 @@ from bpy.props import (StringProperty,
 from bpy.types import (Operator,
                        PropertyGroup,
                        )
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 # ------------------------------------------------------------------------
 #    COLMAP code: https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
@@ -489,7 +489,7 @@ bl_info = {
 }
 
 # global variables for easier access
-colmap_data = {}
+colmap_data = None
 old_box_offset = [0, 0, 0, 0, 0, 0]
 view_port = None
 point_cloud_vertices = None
@@ -613,37 +613,44 @@ def generate_cropping_planes():
     msh.from_pydata(verts, [], faces)
     obj = bpy.data.objects.new('Bounding Box', msh)
     bpy.context.scene.collection.objects.link(obj)
+    bpy.context.scene.objects['Bounding Box'].hide_set(True)
 
     # Add plane text
     text_object_xmin = bpy.data.objects.new("x_min_label", bpy.data.curves.new(type="FONT", name="x_min"))
     text_object_xmin.data.body = "x min"
     text_object_xmin.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_xmin)
+    bpy.context.scene.objects['x_min_label'].hide_set(True)
 
     text_object_xmax = bpy.data.objects.new("x_max_label", bpy.data.curves.new(type="FONT", name="x_max"))
     text_object_xmax.data.body = "x max"
     text_object_xmax.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_xmax)
+    bpy.context.scene.objects['x_max_label'].hide_set(True)
 
     text_object_ymin = bpy.data.objects.new("y_min_label", bpy.data.curves.new(type="FONT", name="y_min"))
     text_object_ymin.data.body = "y min"
     text_object_ymin.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_ymin)
+    bpy.context.scene.objects['y_min_label'].hide_set(True)
 
     text_object_ymax = bpy.data.objects.new("y_max_label", bpy.data.curves.new(type="FONT", name="y_max"))
     text_object_ymax.data.body = "y max"
     text_object_ymax.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_ymax)
+    bpy.context.scene.objects['y_max_label'].hide_set(True)
 
     text_object_zmin = bpy.data.objects.new("z_min_label", bpy.data.curves.new(type="FONT", name="z_min"))
     text_object_zmin.data.body = "z min"
     text_object_zmin.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_zmin)
+    bpy.context.scene.objects['z_min_label'].hide_set(True)
 
     text_object_zmax = bpy.data.objects.new("z_max_label", bpy.data.curves.new(type="FONT", name="z_max"))
     text_object_zmax.data.body = "z max"
     text_object_zmax.data.size *= 2
     bpy.context.scene.collection.objects.link(text_object_zmax)
+    bpy.context.scene.objects['z_max_label'].hide_set(True)
 
     text_object_xmin.rotation_euler = (-math.radians(90), -math.radians(90), math.radians(90))
     text_object_xmax.rotation_euler = (-math.radians(90), -math.radians(90), -math.radians(90))
@@ -961,6 +968,30 @@ def load_camera(colmap_data, context):
     return
 
 
+def update_depth(self, context):
+    depth_coef = bpy.context.scene.my_tool.imagedepth_slider
+    print(depth_coef)
+    #    scale_coef = depth_coef+1
+
+    bpy.context.view_layer.update()
+    camera = bpy.context.scene.objects['Input Camera']
+    plane = bpy.context.scene.objects['Image Plane']
+
+    lens = camera.data.lens
+    scale_coef = (lens + depth_coef * 200) / lens  # not sure the exact scale coefficient
+
+    translation = np.array([0, 0, -depth_coef, 1])
+    world2camera = camera.matrix_world
+    translation = np.dot(world2camera, translation)
+
+    translation_camera = np.array([world2camera[0][3], world2camera[1][3], world2camera[2][3]])
+    translation_camera *= scale_coef
+    translation = Vector(translation[0:3]) - Vector(translation_camera)
+
+    plane.scale = Vector([scale_coef, scale_coef, scale_coef])
+    plane.location = translation
+
+
 # ------------------------------------------------------------------------
 #    Scene Properties
 # ------------------------------------------------------------------------
@@ -999,6 +1030,14 @@ class MyProperties(PropertyGroup):
         description="Toggle transparency",
         default=False,
         update=switch_viewport_to_solid
+    )
+    imagedepth_slider: FloatProperty(
+        name="Image Depth",
+        description="Depth",
+        min=0,
+        max=10,
+        default=0,
+        update=update_depth
     )
 
 
@@ -1290,7 +1329,7 @@ class ExportSceneParameters(Operator):
             "cy": cy,
             "w": int(w),
             "h": int(h),
-            "aabb_scale": 1.0, # unit sphere
+            "aabb_scale": 1.0,  # unit sphere
             "scene_center": center,
             "scene_radius": radius,
             "frames": []
@@ -1340,7 +1379,7 @@ class HideShowImagePlane(Operator):
 
     @classmethod
     def poll(cls, context):
-        return 'Image Plane' in context.scene.collection.objects
+        return 'Image Plane' in context.scene.collection.objects and colmap_data is not None
 
     def execute(self, context):
         status = bpy.context.scene.objects['Image Plane'].hide_get()
@@ -1355,7 +1394,7 @@ class HighlightPointcloud(Operator):
     @classmethod
     def poll(cls, context):
         # do not enable when point cloud is not loaded
-        return 'Point Cloud' in context.scene.collection.objects
+        return 'Point Cloud' in context.scene.collection.objects and colmap_data is not None
 
     def execute(self, context):
         select_all_vert('Point Cloud')
@@ -1381,12 +1420,6 @@ class MainPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout = self.layout
         mytool = scene.my_tool
 
-        row = layout.row(align=True)
-        row.prop(mytool, "transparency_toggle")
-        sub = row.row()
-        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency of Objects')
-        sub.enabled = mytool.transparency_toggle
-
 
 class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
     bl_parent_id = "BN_PT_main"
@@ -1401,6 +1434,45 @@ class LoadingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         layout.prop(mytool, "colmap_path")
         layout.operator("addon.load_colmap")
         layout.separator()
+
+
+class InspectionPanel(NeuralangeloCustomPanel, bpy.types.Panel):
+    bl_parent_id = "BN_PT_main"
+    bl_idname = "BN_PT_inspection"
+    bl_label = "Inspect COLMAP Results"
+
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        mytool = scene.my_tool
+
+        # transparency
+        box = layout.box()
+        row = box.row(align=True)
+        row.alignment = 'CENTER'
+        row.label(text="Transparency")
+
+        row = box.row(align=True)
+        row.prop(mytool, "transparency_toggle")
+        sub = row.row()
+        sub.prop(mytool, "transparency_slider", slider=True, text='Transparency of Objects')
+        sub.enabled = mytool.transparency_toggle
+
+        # slider
+        box = layout.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="Slide Image Along View")
+        box.row().prop(mytool, "imagedepth_slider", slider=True, text='Depth of image eplane')
+
+        # visualization
+        box = layout.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="Visualization")
+        box.row().operator("addon.hide_show_cam_plane")
+        box.row().operator("addon.hide_show_box")
+        box.row().operator("addon.highlight_pointcloud")
 
 
 class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
@@ -1434,7 +1506,6 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         box.separator()
         row = box.row()
         row.operator("addon.crop")
-        box.row().operator("addon.hide_show_box")
         row.operator("addon.hide_show_cropped")
 
         layout.separator()
@@ -1449,34 +1520,17 @@ class BoundingPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         box.row().operator('addon.export_scene_param')
 
 
-class CameraPanel(NeuralangeloCustomPanel, bpy.types.Panel):
-    bl_parent_id = "BN_PT_main"
-    bl_idname = "BN_PT_camera"
-    bl_label = "Inspect COLMAP Results"
-
-    def draw(self, context):
-        scene = context.scene
-        layout = self.layout
-        mytool = scene.my_tool
-
-        box = layout.box()
-        row = box.row()
-        row.alignment = 'CENTER'
-        box.row().operator("addon.hide_show_cam_plane")
-        box.row().operator("addon.highlight_pointcloud")
-
-
 # ------------------------------------------------------------------------
 #    Registration
 # ------------------------------------------------------------------------
 
 classes = (
     MyProperties,
-    LoadCOLMAP,
     MainPanel,
     LoadingPanel,
-    CameraPanel,
+    InspectionPanel,
     BoundingPanel,
+    LoadCOLMAP,
     Crop,
     BoundSphere,
     HideShowBox,
