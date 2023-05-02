@@ -561,7 +561,7 @@ def generate_camera_plane(camera, image_width, image_height):
     # change each uv vertex
     bm = bmesh.from_edit_mesh(plane.data)
     uv_layer = bm.loops.layers.uv.active
-    for idx, v in enumerate(bm.verts):  # TODO: is there a way to automatically figure out the order?
+    for idx, v in enumerate(bm.verts):
         for l in v.link_loops:
             uv_data = l[uv_layer]
             if idx == 0:
@@ -835,7 +835,7 @@ def update_transparency(self, context):
                     space.shading.xray_alpha = alpha
 
 
-def set_keyframe_camera(camera, qvec_w2c, tvec_w2c, idx, inter_frames):
+def set_keyframe_camera(camera, qvec_w2c, tvec_w2c, idx, inter_frames=1):
     # Set rotation and translation of Camera in each frame
 
     tvec, qvec = convert_to_blender_coord(tvec_w2c, qvec_w2c)
@@ -847,31 +847,9 @@ def set_keyframe_camera(camera, qvec_w2c, tvec_w2c, idx, inter_frames):
     camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
 
 
-def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_height, intrinsic_matrix):
+def set_keyframe_image(idx,  plane, inter_frames=1):
     # Set vertices of image plane in each frame
     bpy.context.view_layer.update()
-
-    camera_vert_origin = camera.data.view_frame()
-    # TODO: cache these computation
-    # four corners of image plane
-
-    corners = np.array([
-        [0, 0, 1],
-        [0, image_height, 1],
-        [image_width, image_height, 1],
-        [image_width, 0, 1]
-    ])
-    corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
-    for vert, corner in zip(camera_vert_origin, corners_3D):
-        vert[0] = corner[0]
-        vert[1] = corner[1]
-        vert[2] = -1.0  # blender coord
-
-    plane_verts = plane.data.vertices
-
-    for i in range(4):
-        plane_verts[i].co = camera_vert_origin[i]
-        plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
 
     # Set image texture of image plane in each frame
     material = plane.material_slots[0].material
@@ -953,13 +931,34 @@ def load_camera(colmap_data, context):
     bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
     bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
 
+    # set parent to camera
     plane.parent = camera
+
+    # set plane vertex location
+    camera_vert_origin = camera.data.view_frame()
+
+    corners = np.array([
+        [0, 0, 1],
+        [0, image_height, 1],
+        [image_width, image_height, 1],
+        [image_width, 0, 1]
+    ])
+    corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
+    for vert, corner in zip(camera_vert_origin, corners_3D):
+        vert[0] = corner[0]
+        vert[1] = corner[1]
+        vert[2] = -1.0  # blender coord
+
+    plane_verts = plane.data.vertices
+
+    for i in range(4):
+        plane_verts[i].co = camera_vert_origin[i]
 
     # Setting Camera & Image Plane frame data
     for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
         frame_id = idx + 1  # one-indexed
-        set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
-        set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
+        set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id)
+        set_keyframe_image(frame_id, plane)
 
     # enable texture mode to visualize images
     enable_texture_mode()
@@ -1448,7 +1447,7 @@ class InspectionPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.alignment = 'CENTER'
         row.label(text="Slide Image Along View")
-        box.row().prop(mytool, "imagedepth_slider", slider=True, text='Depth of image plane')
+        box.row().prop(mytool, "imagedepth_slider", slider=True, text='Image plane depth')
 
         # visualization
         box = layout.box()
