@@ -847,14 +847,14 @@ def set_keyframe_camera(camera, qvec_w2c, tvec_w2c, idx, inter_frames):
     camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
 
 
-def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_height, intrinsic_matrix,scale):
+def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_height, intrinsic_matrix):
     # Set vertices of image plane in each frame
     bpy.context.view_layer.update()
 
-    world2camera = camera.matrix_world
     camera_vert_origin = camera.data.view_frame()
     # TODO: cache these computation
     # four corners of image plane
+
     corners = np.array([
         [0, 0, 1],
         [0, image_height, 1],
@@ -863,14 +863,14 @@ def set_keyframe_image(camera, idx, inter_frames, plane, image_width, image_heig
     ])
     corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
     for vert, corner in zip(camera_vert_origin, corners_3D):
-        vert[0] = corner[0]*scale
-        vert[1] = corner[1]*scale
-        vert[2] = -1.0*scale  # blender coord
-    camera_verts = [world2camera @ v for v in camera_vert_origin]
+        vert[0] = corner[0]
+        vert[1] = corner[1]
+        vert[2] = -1.0  # blender coord
+
     plane_verts = plane.data.vertices
 
     for i in range(4):
-        plane_verts[i].co = camera_verts[i]
+        plane_verts[i].co = camera_vert_origin[i]
         plane_verts[i].keyframe_insert(data_path='co', frame=idx * inter_frames)
 
     # Set image texture of image plane in each frame
@@ -953,11 +953,13 @@ def load_camera(colmap_data, context):
     bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
     bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
 
+    plane.parent = camera
+
     # Setting Camera & Image Plane frame data
     for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
         frame_id = idx + 1  # one-indexed
         set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
-        set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix,1)
+        set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix)
 
     # enable texture mode to visualize images
     enable_texture_mode()
@@ -970,58 +972,9 @@ def load_camera(colmap_data, context):
 
 def update_depth(self, context):
     depth_coef = bpy.context.scene.my_tool.imagedepth_slider
-    scale = 1 + depth_coef
-
-    global colmap_data
-
-    # Load colmap data
-    intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
-    intrinsic_matrix = np.array([[intrinsic_param[0][0], 0, intrinsic_param[0][2]],
-                                 [0, intrinsic_param[0][1], intrinsic_param[0][3]],
-                                 [0, 0, 1]])  # TODO: only supports single camera for now
-
-    image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
-    image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
-    image_quaternion = np.stack([img.qvec for img in colmap_data['images'].values()])
-    image_translation = np.stack([img.tvec for img in colmap_data['images'].values()])
-    camera_id = np.stack([img.camera_id for img in colmap_data['images'].values()]) - 1  # make it zero-indexed
-    image_names = np.stack([img.name for img in colmap_data['images'].values()])
-    num_image = image_names.shape[0]
-
-    # set start and end frame
-    context.scene.frame_start = 1
-    context.scene.frame_end = num_image
-
-    # Load image file
-    sort_image_id = np.argsort(image_names)
-    image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
-
-    file_name = []
-    for image_id in sort_image_id:
-        file_name.append({'name': image_names[image_id]})
-
-    bpy.ops.image.open(filepath=image_folder_path,
-                       directory=image_folder_path,
-                       files=file_name,
-                       relative_path=True, show_multiview=False)
-
-    image_sequence = bpy.data.images[file_name[0]['name']]  # sequence named after the first image filename
-    image_sequence.source = 'SEQUENCE'
-
+    scale_coef = 1 + depth_coef
     camera = bpy.context.scene.objects['Input Camera']
-
-    # Image Plane Setting
-    generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
-    plane = bpy.context.scene.objects['Image Plane']
-
-
-    # Setting Camera & Image Plane frame data
-    for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
-        frame_id = idx + 1  # one-indexed
-        set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id, 1)
-        set_keyframe_image(camera, frame_id, 1, plane, image_width[c_id], image_height[c_id], intrinsic_matrix, scale)
-
-    enable_texture_mode()
+    camera.scale = (scale_coef, scale_coef, scale_coef)
 
 
 # ------------------------------------------------------------------------
@@ -1495,7 +1448,7 @@ class InspectionPanel(NeuralangeloCustomPanel, bpy.types.Panel):
         row = box.row()
         row.alignment = 'CENTER'
         row.label(text="Slide Image Along View")
-        box.row().prop(mytool, "imagedepth_slider", slider=True, text='Depth of image eplane')
+        box.row().prop(mytool, "imagedepth_slider", slider=True, text='Depth of image plane')
 
         # visualization
         box = layout.box()
