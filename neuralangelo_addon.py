@@ -1,12 +1,12 @@
 import collections
 import json
-import math
 import os
+import shutil
 import struct
-from typing import Union
 
 import bmesh
 import bpy
+import math
 import numpy as np
 from bpy.props import (StringProperty,
                        BoolProperty,
@@ -17,7 +17,8 @@ from bpy.props import (StringProperty,
 from bpy.types import (Operator,
                        PropertyGroup,
                        )
-from mathutils import Matrix, Vector
+from mathutils import Matrix
+from typing import Union
 
 # ------------------------------------------------------------------------
 #    COLMAP code: https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
@@ -520,66 +521,6 @@ def display_pointcloud(points3D):
     bpy.context.scene.collection.objects.link(obj)
 
 
-def generate_camera_plane(camera, image_width, image_height):
-    if 'Image Plane' in bpy.data.objects:
-        obj = bpy.context.scene.objects['Image Plane']
-        bpy.data.meshes.remove(obj.data, do_unlink=True)
-
-    bpy.context.view_layer.update()
-
-    # create a plane with 4 corners
-    verts = camera.data.view_frame()
-    faces = [[0, 1, 2, 3]]
-    msh = bpy.data.meshes.new('Image Plane')
-    msh.from_pydata(verts, [], faces)
-    obj = bpy.data.objects.new('Image Plane', msh)
-    bpy.context.scene.collection.objects.link(obj)
-
-    plane = bpy.context.scene.objects['Image Plane']
-
-    if 'Image Material' not in bpy.data.materials:
-        material = bpy.data.materials.new(name="Image Material")
-    else:
-        material = bpy.data.materials["Image Material"]
-
-    if len(plane.material_slots) == 0:
-        plane.data.materials.append(material)
-
-    material = plane.active_material
-    material.use_nodes = True
-
-    image_texture = material.node_tree.nodes.new(type='ShaderNodeTexImage')
-    principled_bsdf = material.node_tree.nodes.get('Principled BSDF')
-    material.node_tree.links.new(image_texture.outputs['Color'], principled_bsdf.inputs['Base Color'])
-
-    plane = bpy.context.scene.objects['Image Plane']
-    bpy.context.view_layer.objects.active = plane
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
-
-    # change each uv vertex
-    bm = bmesh.from_edit_mesh(plane.data)
-    uv_layer = bm.loops.layers.uv.active
-    for idx, v in enumerate(bm.verts):
-        for l in v.link_loops:
-            uv_data = l[uv_layer]
-            if idx == 0:
-                uv_data.uv[0] = 0.0
-                uv_data.uv[1] = 0.0
-            elif idx == 1:
-                uv_data.uv[0] = 0.0
-                uv_data.uv[1] = 1.0
-            elif idx == 2:
-                uv_data.uv[0] = 1.0
-                uv_data.uv[1] = 1.0
-            elif idx == 3:
-                uv_data.uv[0] = 1.0
-                uv_data.uv[1] = 0.0
-            break
-    bpy.ops.object.mode_set(mode='OBJECT')
-
-
 def generate_cropping_planes():
     global point_cloud_vertices
 
@@ -847,7 +788,7 @@ def set_keyframe_camera(camera, qvec_w2c, tvec_w2c, idx, inter_frames=1):
     camera.keyframe_insert(data_path='rotation_quaternion', frame=idx * inter_frames)
 
 
-def set_keyframe_image(idx,  plane, inter_frames=1):
+def set_keyframe_image(idx, plane, inter_frames=1):
     # Set vertices of image plane in each frame
     bpy.context.view_layer.update()
 
@@ -865,6 +806,102 @@ def select_all_vert(obj_name):
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.select_mode(type="VERT")
         bpy.ops.mesh.select_all(action='SELECT')
+
+
+def generate_camera_plane(camera, image_width, image_height, intrinsic_matrix):
+    if 'Image Plane' in bpy.data.objects:
+        obj = bpy.context.scene.objects['Image Plane']
+        bpy.data.meshes.remove(obj.data, do_unlink=True)
+
+    bpy.context.view_layer.update()
+
+    # create a plane with 4 corners
+    verts = camera.data.view_frame()
+    faces = [[0, 1, 2, 3]]
+    msh = bpy.data.meshes.new('Image Plane')
+    msh.from_pydata(verts, [], faces)
+    obj = bpy.data.objects.new('Image Plane', msh)
+    bpy.context.scene.collection.objects.link(obj)
+
+    plane = bpy.context.scene.objects['Image Plane']
+    bpy.context.view_layer.objects.active = plane
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0)
+
+    # change each uv vertex
+    bm = bmesh.from_edit_mesh(plane.data)
+    uv_layer = bm.loops.layers.uv.active
+    for idx, v in enumerate(bm.verts):
+        for l in v.link_loops:
+            uv_data = l[uv_layer]
+            if idx == 0:
+                uv_data.uv[0] = 0.0
+                uv_data.uv[1] = 0.0
+            elif idx == 1:
+                uv_data.uv[0] = 0.0
+                uv_data.uv[1] = 1.0
+            elif idx == 2:
+                uv_data.uv[0] = 1.0
+                uv_data.uv[1] = 1.0
+            elif idx == 3:
+                uv_data.uv[0] = 1.0
+                uv_data.uv[1] = 0.0
+            break
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    plane.parent = camera
+    # set plane vertex location
+    camera_vert_origin = camera.data.view_frame()
+    corners = np.array([
+        [0, 0, 1],
+        [0, image_height, 1],
+        [image_width, image_height, 1],
+        [image_width, 0, 1]
+    ])
+    corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
+    for vert, corner in zip(camera_vert_origin, corners_3D):
+        vert[0] = corner[0]
+        vert[1] = corner[1]
+        vert[2] = -1.0  # blender coord
+
+    for i in range(4):
+        plane.data.vertices[i].co = camera_vert_origin[i]
+
+
+def copy_all_images(blender_img_path, image_folder_path, image_names, sort_image_id):
+    file_names = []
+    for idx, sorted_idx in enumerate(sort_image_id):
+        shutil.copyfile(image_folder_path + image_names[sorted_idx],
+                        blender_img_path + '%05d.' % (idx + 1) + image_names[sorted_idx].split('.')[-1])
+        file_names.append('%05d.' % (idx + 1) + image_names[sorted_idx].split('.')[-1])
+    return file_names
+
+
+def generate_camera_plane_texture(image_sequence):
+    plane = bpy.context.scene.objects['Image Plane']
+    if 'Image Material' not in bpy.data.materials:
+        material = bpy.data.materials.new(name="Image Material")
+    else:
+        material = bpy.data.materials["Image Material"]
+
+    if len(plane.material_slots) == 0:
+        plane.data.materials.append(material)
+
+    material = plane.active_material
+    material.use_nodes = True
+
+    image_texture = material.node_tree.nodes.new(type='ShaderNodeTexImage')
+    principled_bsdf = material.node_tree.nodes.get('Principled BSDF')
+    material.node_tree.links.new(image_texture.outputs['Color'], principled_bsdf.inputs['Base Color'])
+
+    image_texture.image = image_sequence
+    image_texture.image_user.use_cyclic = True
+    image_texture.image_user.use_auto_refresh = True
+    image_texture.image_user.frame_duration = 1
+    image_texture.image_user.frame_start = 0
+    image_texture.image_user.frame_offset = 0
 
 
 def load_camera(colmap_data, context):
@@ -898,16 +935,23 @@ def load_camera(colmap_data, context):
     sort_image_id = np.argsort(image_names)
     image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
 
-    file_name = []
-    for image_id in sort_image_id:
-        file_name.append({'name': image_names[image_id]})
+    ## make a copy of images to comply with the continuous numbering requirement of sequence
+    blender_img_path = bpy.context.scene.my_tool.colmap_path + 'blender_images/'
+    if os.path.isdir(blender_img_path):
+        if os.listdir(blender_img_path):
+            blender_file_names = sorted(os.listdir(blender_img_path))
+        else:
+            blender_file_names = copy_all_images(blender_img_path, image_folder_path, image_names, sort_image_id)
+    else:
+        os.mkdir(blender_img_path)
+        blender_file_names = copy_all_images(blender_img_path, image_folder_path, image_names, sort_image_id)
 
-    bpy.ops.image.open(filepath=image_folder_path,
-                       directory=image_folder_path,
-                       files=file_name,
+    blender_file_names_formatted = [{"name": file_name} for file_name in blender_file_names]
+    bpy.ops.image.open(filepath=blender_img_path, directory=blender_img_path, files=blender_file_names_formatted,
                        relative_path=True, show_multiview=False)
 
-    image_sequence = bpy.data.images[file_name[0]['name']]  # sequence named after the first image filename
+    ## sequence named after the first image filename
+    image_sequence = bpy.data.images[blender_file_names_formatted[0]['name']]
     image_sequence.source = 'SEQUENCE'
 
     # Camera initialization
@@ -921,40 +965,11 @@ def load_camera(colmap_data, context):
     camera = bpy.context.scene.objects['Input Camera']
 
     # Image Plane Setting
-    generate_camera_plane(camera, int(image_width[0]), int(image_height[0]))  # create plane
-    plane = bpy.context.scene.objects['Image Plane']
-
-    plane.material_slots[0].material.node_tree.nodes.get("Image Texture").image = image_sequence
-    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_cyclic = True
-    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.use_auto_refresh = True
-    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_duration = 1
-    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_start = 0
-    bpy.data.materials["Image Material"].node_tree.nodes["Image Texture"].image_user.frame_offset = 0
-
-    # set parent to camera
-    plane.parent = camera
-
-    # set plane vertex location
-    camera_vert_origin = camera.data.view_frame()
-
-    corners = np.array([
-        [0, 0, 1],
-        [0, image_height, 1],
-        [image_width, image_height, 1],
-        [image_width, 0, 1]
-    ])
-    corners_3D = corners @ (np.linalg.inv(intrinsic_matrix).transpose(-1, -2))
-    for vert, corner in zip(camera_vert_origin, corners_3D):
-        vert[0] = corner[0]
-        vert[1] = corner[1]
-        vert[2] = -1.0  # blender coord
-
-    plane_verts = plane.data.vertices
-
-    for i in range(4):
-        plane_verts[i].co = camera_vert_origin[i]
+    generate_camera_plane(camera, int(image_width[0]), int(image_height[0]), intrinsic_matrix)  # create plane
+    generate_camera_plane_texture(image_sequence)
 
     # Setting Camera & Image Plane frame data
+    plane = bpy.context.scene.objects['Image Plane']
     for idx, (i_id, c_id) in enumerate(zip(sort_image_id, camera_id)):
         frame_id = idx + 1  # one-indexed
         set_keyframe_camera(camera, image_quaternion[i_id], image_translation[i_id], frame_id)
