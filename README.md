@@ -2,7 +2,6 @@
 
 # BlenderNeuralangelo
 
-<hr>
 </div>
 
 ![](assets/0_teaser.gif)
@@ -21,7 +20,7 @@ cd /path/to/dir
 git clone git@github.com:mli0603/BlenderNeuralangelo.git
 ```
 
-### Running COLMAP
+### 0: Running COLMAP
 
 Please follow the [instructions](https://colmap.github.io/cli.html) to obtain COLMAP results. Alternatively, an example
 is provided in the folder [toy_example](toy_example).
@@ -36,13 +35,13 @@ If COLMAP instructions are followed correctly, a folder structure of the followi
 |__ run-colmap-photometric.sh
 ```
 
-### Install as Addon
+### 1.1: Install as Addon
 
 Installing as a Blender Addon avoids re-installation after quitting blender. To install as an Addon:
 
 ![](assets/1_installation_addon.gif)
 
-### Run as code
+### 1.2: Run as code
 
 Alternatively, the code can be directly run as follows:
 
@@ -50,33 +49,33 @@ Alternatively, the code can be directly run as follows:
 
 After quitting Blender, this step must repeat.
 
-### Locating the control panel
+### 2: Locating the control panel
 
 After installation, the BlenderNeuralangelo panel can be located on the right side or press `N` on the keyboard.
 
 ![](assets/2_locating_panel.gif)
 
-### Load COLMAP data
+### 3: Load COLMAP data
 
 COLMAP can be loaded by providing the path to the COLMAP work directory. The images, camera parameters and sparse
 reconstruction results are loaded.
 
 ![](assets/3_load_data.gif)
 
-### Inspect COLMAP data
+### 4: Inspect COLMAP data
 
 COLMAP data can be inspected qualitatively by looking at the RGB, sparse reconstruction and pose results.
 
 ![](assets/4_inspect_data.gif)
 
-### Defining region of interest
+### 5: Defining region of interest
 
 A graphics interface is provided to define the region of interest for Neuralangelo as a form of bounding box. Points
 outside the region of interest can be cropped.
 
 ![](assets/5_crop_point_cloud.gif)
 
-### Defining bounding sphere
+### 6: Defining bounding sphere
 
 [Neuralangelo](https://research.nvidia.com/labs/dir/neuralangelo/) and prior
 works <sup>[1](https://arxiv.org/abs/2003.09852)[2](https://arxiv.org/abs/2106.10689)[3](https://arxiv.org/abs/2106.12052)</sup>
