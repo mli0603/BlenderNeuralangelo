@@ -84,8 +84,3 @@ and exports the scene parameters (intrinsics, poses, bounding sphere) following
 the [Instant NGP](https://github.com/NVlabs/instant-ngp) format.
 
 ![](assets/6_generate_bounding_sphere.gif)
-
-## Authors
-
-If you have questions, feel free to open an issue or reach out us at Max Li (zli122@jhu.edu) and Fangzhou Zheng (
-fzheng11@jhu.edu).
