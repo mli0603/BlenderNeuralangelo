@@ -29,10 +29,10 @@ If COLMAP instructions are followed correctly, a folder structure of the followi
 
 ```angular2html
 |__ dense (or your customized work directory)
-|__ images (folder of undistorted images)
-|__ sparse (folder of sparse reconstruction results)
-|__ run-colmap-geometric.sh
-|__ run-colmap-photometric.sh
+    |__ images (folder of undistorted images)
+    |__ sparse (folder of sparse reconstruction results)
+    |__ run-colmap-geometric.sh
+    |__ run-colmap-photometric.sh
 ```
 
 ### 1.1: Install as Addon
