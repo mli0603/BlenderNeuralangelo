@@ -497,6 +497,7 @@ point_cloud_vertices = None
 select_point_index = []
 radius = 0
 center = (0, 0, 0)
+bounding_box = []
 
 
 # ------------------------------------------------------------------------
@@ -1174,6 +1175,7 @@ class BoundSphere(Operator):
         global select_point_index
         global radius
         global center
+        global bounding_box
 
         delete_bounding_sphere()
 
@@ -1188,6 +1190,7 @@ class BoundSphere(Operator):
         y_max = max_coordinate[1]
         z_min = min_coordinate[2]
         z_max = max_coordinate[2]
+        bounding_box = [(x_min, x_max), (y_min, y_max), (z_min, z_max)]
 
         center_x = (x_min + x_max) / 2
         center_y = (y_min + y_max) / 2
@@ -1298,7 +1301,7 @@ class ExportSceneParameters(Operator):
         return 'Bounding Sphere' in context.scene.collection.objects
 
     def execute(self, context):
-        global radius, center, colmap_data
+        global radius, center, colmap_data, bounding_box
         intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
         fl_x = intrinsic_param[0][0]  # TODO: only supports single camera for now
         fl_y = intrinsic_param[0][1]
@@ -1317,6 +1320,8 @@ class ExportSceneParameters(Operator):
             "camera_angle_y": angle_y,
             "fl_x": fl_x,
             "fl_y": fl_y,
+            "sk_x": 0.0, # TODO: check if colmap has skew
+            "sk_y": 0.0,
             "k1": 0.0,  # take undistorted images only
             "k2": 0.0,
             "k3": 0.0,
@@ -1328,9 +1333,12 @@ class ExportSceneParameters(Operator):
             "cy": cy,
             "w": int(w),
             "h": int(h),
-            "aabb_scale": 1.0,  # unit sphere
-            "scene_center": center,
-            "scene_radius": radius,
+            "aabb_scale": np.exp2(np.rint(np.log2(radius))), # power of two, for INGP resolution computation 
+            "aabb_range": bounding_box,
+            "sphere_center": center,
+            "sphere_radius": radius,
+            "centered": True, # flag for if a scene is centered at origin
+            "scaled": False, # flag for if a scene is scaled
             "frames": []
         }
 
@@ -1346,14 +1354,14 @@ class ExportSceneParameters(Operator):
         # read poses
         for img in colmap_data['images'].values():
             rotation = qvec2rotmat(img.qvec)
-            translation = (img.tvec - center) / radius
-            translation = translation.reshape(3, 1)
+            translation = img.tvec.reshape(3, 1)
             w2c = np.concatenate([rotation, translation], 1)
             w2c = np.concatenate([w2c, np.array([0, 0, 0, 1])[None]], 0)
             c2w = np.linalg.inv(w2c)
-            c2w = c2w @ flip_mat  # convert to GL convention used in NGP
+            c2w[:3,-1] -= center  # center scene at origin, we do NOT scale the scene for compatibility with iNGP
+            c2w = c2w @ flip_mat  # convert to GL convention used in iNGP
 
-            frame = {"file_path": path + '/images/' + img.name, "transform_matrix": c2w.tolist()}
+            frame = {"file_path": 'images/' + img.name, "transform_matrix": c2w.tolist()}
             # print(frame)
             out["frames"].append(frame)
 
