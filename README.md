@@ -35,13 +35,22 @@ If COLMAP instructions are followed correctly, a folder structure of the followi
     |__ run-colmap-photometric.sh
 ```
 
-### 1.1: Install as Addon
+### 1.1: Run Blender from command line
+You can directly run Blender without worrying installation by:
+
+```bash
+./blender --python PATH_TO_BlenderNeuralangelo/start_blender_with_addon.py
+```
+
+Replace `PATH_TO_BlenderNeuralangelo` with your path to `BlenderNeuralangelo`.
+
+### 1.2: Install as Addon
 
 Installing as a Blender Addon avoids re-installation after quitting blender. To install as an Addon:
 
 ![](assets/1_installation_addon.gif)
 
-### 1.2: Run as code
+### 1.3: Run as code
 
 Alternatively, the code can be directly run as follows:
 
