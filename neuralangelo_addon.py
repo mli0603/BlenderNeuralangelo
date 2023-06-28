@@ -615,6 +615,60 @@ def generate_cropping_planes():
     return
 
 
+def set_plane_location(x_max, x_min, y_max, y_min, z_max, z_min):
+    crop_plane = bpy.data.objects['Bounding Box']
+    text_object_xmin = bpy.data.objects['x_min_label']
+    text_object_xmax = bpy.data.objects['x_max_label']
+    text_object_ymin = bpy.data.objects['y_min_label']
+    text_object_ymax = bpy.data.objects['y_max_label']
+    text_object_zmin = bpy.data.objects['z_min_label']
+    text_object_zmax = bpy.data.objects['z_max_label']
+
+    crop_plane.data.vertices[0].co.x = x_max
+    crop_plane.data.vertices[0].co.y = y_max
+    crop_plane.data.vertices[0].co.z = z_min
+
+    crop_plane.data.vertices[1].co.x = x_max
+    crop_plane.data.vertices[1].co.y = y_min
+    crop_plane.data.vertices[1].co.z = z_min
+
+    crop_plane.data.vertices[2].co.x = x_min
+    crop_plane.data.vertices[2].co.y = y_min
+    crop_plane.data.vertices[2].co.z = z_min
+
+    crop_plane.data.vertices[3].co.x = x_min
+    crop_plane.data.vertices[3].co.y = y_max
+    crop_plane.data.vertices[3].co.z = z_min
+
+    crop_plane.data.vertices[4].co.x = x_max
+    crop_plane.data.vertices[4].co.y = y_max
+    crop_plane.data.vertices[4].co.z = z_max
+
+    crop_plane.data.vertices[5].co.x = x_max
+    crop_plane.data.vertices[5].co.y = y_min
+    crop_plane.data.vertices[5].co.z = z_max
+
+    crop_plane.data.vertices[6].co.x = x_min
+    crop_plane.data.vertices[6].co.y = y_min
+    crop_plane.data.vertices[6].co.z = z_max
+
+    crop_plane.data.vertices[7].co.x = x_min
+    crop_plane.data.vertices[7].co.y = y_max
+    crop_plane.data.vertices[7].co.z = z_max
+
+    # update text location and rotation
+    text_width = bpy.context.scene.objects['x_min_label'].dimensions[0] / 2
+
+    text_object_xmin.location = (x_min - 1, (y_max + y_min) / 2, (z_max + z_min) / 2 - text_width)
+    text_object_xmax.location = (x_max + 0.5, (y_max + y_min) / 2, (z_max + z_min) / 2 - text_width)
+
+    text_object_ymin.location = ((x_max + x_min) / 2 + text_width, y_min - 1, (z_max + z_min) / 2)
+    text_object_ymax.location = ((x_max + x_min) / 2 - text_width, y_max + 0.5, (z_max + z_min) / 2)
+
+    text_object_zmin.location = ((x_max + x_min) / 2 - text_width, (y_max + y_min) / 2, z_min - 1)
+    text_object_zmax.location = ((x_max + x_min) / 2 - text_width, (y_max + y_min) / 2, z_max + 1)
+
+
 def update_cropping_plane(self, context):
     global old_box_offset
     global point_cloud_vertices
@@ -633,7 +687,6 @@ def update_cropping_plane(self, context):
     z_max = max_coordinate[2]
 
     slider = bpy.context.scene.my_tool.box_slider
-    crop_plane = bpy.data.objects['Bounding Box']
 
     x_min_change = -slider[0]
     x_max_change = -slider[1]
@@ -668,68 +721,8 @@ def update_cropping_plane(self, context):
 
     old_box_offset = [n for n in slider]
 
-    crop_plane.data.vertices[0].co.x = x_max + x_max_change
-    crop_plane.data.vertices[0].co.y = y_max + y_max_change
-    crop_plane.data.vertices[0].co.z = z_min - z_min_change
-
-    crop_plane.data.vertices[1].co.x = x_max + x_max_change
-    crop_plane.data.vertices[1].co.y = y_min - y_min_change
-    crop_plane.data.vertices[1].co.z = z_min - z_min_change
-
-    crop_plane.data.vertices[2].co.x = x_min - x_min_change
-    crop_plane.data.vertices[2].co.y = y_min - y_min_change
-    crop_plane.data.vertices[2].co.z = z_min - z_min_change
-
-    crop_plane.data.vertices[3].co.x = x_min - x_min_change
-    crop_plane.data.vertices[3].co.y = y_max + y_max_change
-    crop_plane.data.vertices[3].co.z = z_min - z_min_change
-
-    crop_plane.data.vertices[4].co.x = x_max + x_max_change
-    crop_plane.data.vertices[4].co.y = y_max + y_max_change
-    crop_plane.data.vertices[4].co.z = z_max + z_max_change
-
-    crop_plane.data.vertices[5].co.x = x_max + x_max_change
-    crop_plane.data.vertices[5].co.y = y_min - y_min_change
-    crop_plane.data.vertices[5].co.z = z_max + z_max_change
-
-    crop_plane.data.vertices[6].co.x = x_min - x_min_change
-    crop_plane.data.vertices[6].co.y = y_min - y_min_change
-    crop_plane.data.vertices[6].co.z = z_max + z_max_change
-
-    crop_plane.data.vertices[7].co.x = x_min - x_min_change
-    crop_plane.data.vertices[7].co.y = y_max + y_max_change
-    crop_plane.data.vertices[7].co.z = z_max + z_max_change
-
-    text_object_xmin = bpy.data.objects['x_min_label']
-    text_object_xmax = bpy.data.objects['x_max_label']
-    text_object_ymin = bpy.data.objects['y_min_label']
-    text_object_ymax = bpy.data.objects['y_max_label']
-    text_object_zmin = bpy.data.objects['z_min_label']
-    text_object_zmax = bpy.data.objects['z_max_label']
-    # update text location and rotation
-
-    text_width = bpy.context.scene.objects['x_min_label'].dimensions[0] / 2
-
-    text_object_xmin.location = (x_min - x_min_change - 1, (y_max + y_max_change + y_min - y_min_change) / 2,
-                                 (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
-    text_object_xmax.location = (x_max + x_max_change + 0.5, (y_max + y_max_change + y_min - y_min_change) / 2,
-                                 (z_max + z_max_change + z_min - z_min_change) / 2 - text_width)
-
-    text_object_ymin.location = (
-        (x_max + x_max_change + x_min - x_min_change) / 2 + text_width, y_min - y_min_change - 1,
-        (z_max + z_max_change + z_min - z_min_change) / 2)
-    text_object_ymax.location = (
-        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width, y_max + y_max_change + 0.5,
-        (z_max + z_max_change + z_min - z_min_change) / 2)
-
-    text_object_zmin.location = (
-        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
-        (y_max + y_max_change + y_min - y_min_change) / 2,
-        z_min - z_min_change - 1)
-    text_object_zmax.location = (
-        (x_max + x_max_change + x_min - x_min_change) / 2 - text_width,
-        (y_max + y_max_change + y_min - y_min_change) / 2,
-        z_max + z_max_change + 1)
+    set_plane_location(x_max + x_max_change, x_min - x_min_change, y_max + y_max_change, y_min - y_min_change,
+                       z_max + z_max_change, z_min - z_min_change)
 
 
 def reset_my_slider_to_default():
@@ -1013,7 +1006,7 @@ class MyProperties(PropertyGroup):
         description="X_min, X_max ,Y_min ,Y_max ,Z_min ,Z_max",
         size=6,
         min=0,
-        max=20,
+        max=50,
         default=(0, 0, 0, 0, 0, 0),
         update=update_cropping_plane
     )
@@ -1090,7 +1083,31 @@ class LoadCOLMAP(Operator):
 
         # generate bounding boxes for cropping
         generate_cropping_planes()
-        reset_my_slider_to_default()
+
+        if os.path.isfile(bpy.path.abspath(mytool.colmap_path + 'transforms.json')):
+            # if previously cropped, load cropped results
+            with open(bpy.path.abspath(mytool.colmap_path + 'transforms.json'), 'r') as file:
+                transforms = json.load(file)
+
+            max_coordinate = np.max(point_cloud_vertices, axis=0)
+            min_coordinate = np.min(point_cloud_vertices, axis=0)
+            if 'aabb_range' in transforms.keys():
+                bbox = transforms['aabb_range']
+
+                slider = bpy.context.scene.my_tool.box_slider
+
+                slider[0] = - min_coordinate[0] + bbox[0][0]
+                slider[1] = max_coordinate[0] - bbox[0][1]
+                slider[2] = - min_coordinate[1] + bbox[1][0]
+                slider[3] = max_coordinate[1] - bbox[1][1]
+                slider[4] = -min_coordinate[2] + bbox[2][0]
+                slider[5] = max_coordinate[2] - bbox[2][1]
+
+                set_plane_location(bbox[0][0], bbox[0][1], bbox[1][0], bbox[1][1], bbox[2][0], bbox[2][1])
+            else:
+                reset_my_slider_to_default()
+        else:
+            reset_my_slider_to_default()
 
         # load camera info
         load_camera(colmap_data, context)
@@ -1320,7 +1337,7 @@ class ExportSceneParameters(Operator):
             "camera_angle_y": angle_y,
             "fl_x": fl_x,
             "fl_y": fl_y,
-            "sk_x": 0.0, # TODO: check if colmap has skew
+            "sk_x": 0.0,  # TODO: check if colmap has skew
             "sk_y": 0.0,
             "k1": 0.0,  # take undistorted images only
             "k2": 0.0,
@@ -1333,12 +1350,12 @@ class ExportSceneParameters(Operator):
             "cy": cy,
             "w": int(w),
             "h": int(h),
-            "aabb_scale": np.exp2(np.rint(np.log2(radius))), # power of two, for INGP resolution computation 
+            "aabb_scale": np.exp2(np.rint(np.log2(radius))),  # power of two, for INGP resolution computation
             "aabb_range": bounding_box,
             "sphere_center": center,
             "sphere_radius": radius,
-            "centered": True, # flag for if a scene is centered at origin
-            "scaled": False, # flag for if a scene is scaled
+            "centered": True,  # flag for if a scene is centered at origin
+            "scaled": False,  # flag for if a scene is scaled
             "frames": []
         }
 
@@ -1358,7 +1375,7 @@ class ExportSceneParameters(Operator):
             w2c = np.concatenate([rotation, translation], 1)
             w2c = np.concatenate([w2c, np.array([0, 0, 0, 1])[None]], 0)
             c2w = np.linalg.inv(w2c)
-            c2w[:3,-1] -= center  # center scene at origin, we do NOT scale the scene for compatibility with iNGP
+            c2w[:3, -1] -= center  # center scene at origin, we do NOT scale the scene for compatibility with iNGP
             c2w = c2w @ flip_mat  # convert to GL convention used in iNGP
 
             frame = {"file_path": 'images/' + img.name, "transform_matrix": c2w.tolist()}
