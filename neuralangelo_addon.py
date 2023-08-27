@@ -1354,8 +1354,6 @@ class ExportSceneParameters(Operator):
             "aabb_range": bounding_box,
             "sphere_center": center,
             "sphere_radius": radius,
-            "centered": True,  # flag for if a scene is centered at origin
-            "scaled": False,  # flag for if a scene is scaled
             "frames": []
         }
 
@@ -1375,7 +1373,6 @@ class ExportSceneParameters(Operator):
             w2c = np.concatenate([rotation, translation], 1)
             w2c = np.concatenate([w2c, np.array([0, 0, 0, 1])[None]], 0)
             c2w = np.linalg.inv(w2c)
-            c2w[:3, -1] -= center  # center scene at origin, we do NOT scale the scene for compatibility with iNGP
             c2w = c2w @ flip_mat  # convert to GL convention used in iNGP
 
             frame = {"file_path": 'images/' + img.name, "transform_matrix": c2w.tolist()}
