@@ -22,17 +22,24 @@ git clone git@github.com:mli0603/BlenderNeuralangelo.git
 
 ### 0: Running COLMAP
 
-Please follow the [instructions](https://colmap.github.io/cli.html) to obtain COLMAP results. Alternatively, an example
+Please follow the [instructions](https://github.com/NVlabs/neuralangelo/blob/main/DATA_PROCESSING.md) to obtain COLMAP results. Alternatively, an example
 is provided in the folder [toy_example](toy_example).
 
 If COLMAP instructions are followed correctly, a folder structure of the following should be expected:
 
-```angular2html
-|__ dense (or your customized work directory)
-    |__ images (folder of undistorted images)
-    |__ sparse (folder of sparse reconstruction results)
-    |__ run-colmap-geometric.sh
-    |__ run-colmap-photometric.sh
+```
+DATA_PATH
+├─ database.db      (COLMAP database)
+├─ images           (undistorted input images)
+├─ images_raw       (raw input images)
+├─ sparse           (COLMAP data from SfM)
+│  ├─ cameras.bin   (camera parameters)
+│  ├─ images.bin    (images and camera poses)
+│  ├─ points3D.bin  (sparse point clouds)
+│  ├─ 0             (a directory containing individual SfM models. There could also be 1, 2... etc.)
+│  ...
+├─ stereo (COLMAP data for MVS, not used here)
+...
 ```
 
 ### 1.1: Run Blender from command line
