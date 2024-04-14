@@ -929,7 +929,7 @@ def load_camera(colmap_data, context):
     sort_image_id = np.argsort(image_names)
     image_folder_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'images/')
 
-    ## make a copy of images to comply with the continuous numbering requirement of sequence
+    # make a copy of images to comply with the continuous numbering requirement of sequence
     blender_img_path = bpy.context.scene.my_tool.colmap_path + 'blender_images/'
     if os.path.isdir(blender_img_path):
         if os.listdir(blender_img_path):
@@ -944,7 +944,7 @@ def load_camera(colmap_data, context):
     bpy.ops.image.open(filepath=blender_img_path, directory=blender_img_path, files=blender_file_names_formatted,
                        relative_path=True, show_multiview=False)
 
-    ## sequence named after the first image filename
+    # sequence named after the first image filename
     image_sequence = bpy.data.images[blender_file_names_formatted[0]['name']]
     image_sequence.source = 'SEQUENCE'
 
@@ -999,7 +999,7 @@ class MyProperties(PropertyGroup):
         default="",
         maxlen=1024,
         subtype='DIR_PATH'
-    )
+    )  # type: ignore
     box_slider: FloatVectorProperty(
         name="Plane offset",
         subtype='TRANSLATION',
@@ -1009,7 +1009,7 @@ class MyProperties(PropertyGroup):
         max=50,
         default=(0, 0, 0, 0, 0, 0),
         update=update_cropping_plane
-    )
+    )  # type: ignore
     transparency_slider: FloatProperty(
         name="Transparency",
         description="Transparency",
@@ -1017,13 +1017,13 @@ class MyProperties(PropertyGroup):
         max=1,
         default=0.1,
         update=update_transparency
-    )
+    )  # type: ignore
     transparency_toggle: BoolProperty(
         name="",
         description="Toggle transparency",
         default=False,
         update=switch_viewport_to_solid
-    )
+    )  # type: ignore
     imagedepth_slider: FloatProperty(
         name="Image Depth",
         description="Depth",
@@ -1031,7 +1031,7 @@ class MyProperties(PropertyGroup):
         max=15,
         default=0,
         update=update_depth
-    )
+    )  # type: ignore
 
 
 # ------------------------------------------------------------------------
@@ -1214,7 +1214,7 @@ class BoundSphere(Operator):
         center_z = (z_min + z_max) / 2
 
         radius = np.max(np.sqrt((unhide_verts[:, 0] - center_x) ** 2 + (unhide_verts[:, 1] - center_y) ** 2 + (
-                unhide_verts[:, 2] - center_z) ** 2))
+            unhide_verts[:, 2] - center_z) ** 2))
         center = (center_x, center_y, center_z)
 
         num_segments = 128
@@ -1319,37 +1319,28 @@ class ExportSceneParameters(Operator):
 
     def execute(self, context):
         global radius, center, colmap_data, bounding_box
-        intrinsic_param = np.array([camera.params for camera in colmap_data['cameras'].values()])
-        fl_x = intrinsic_param[0][0]  # TODO: only supports single camera for now
-        fl_y = intrinsic_param[0][1]
-        cx = intrinsic_param[0][2]
-        cy = intrinsic_param[0][3]
-        image_width = np.array([camera.width for camera in colmap_data['cameras'].values()])
-        image_height = np.array([camera.height for camera in colmap_data['cameras'].values()])
-        w = image_width[0]
-        h = image_height[0]
 
-        angle_x = math.atan(w / (fl_x * 2)) * 2
-        angle_y = math.atan(h / (fl_y * 2)) * 2
+        # angle_x = math.atan(w / (fl_x * 2)) * 2
+        # angle_y = math.atan(h / (fl_y * 2)) * 2
 
         out = {
-            "camera_angle_x": angle_x,
-            "camera_angle_y": angle_y,
-            "fl_x": fl_x,
-            "fl_y": fl_y,
-            "sk_x": 0.0,  # TODO: check if colmap has skew
-            "sk_y": 0.0,
-            "k1": 0.0,  # take undistorted images only
-            "k2": 0.0,
-            "k3": 0.0,
-            "k4": 0.0,
-            "p1": 0.0,
-            "p2": 0.0,
+            # "camera_angle_x": angle_x,
+            # "camera_angle_y": angle_y,
+            # "fl_x": fl_x,
+            # "fl_y": fl_y,
+            # "sk_x": 0.0,
+            # "sk_y": 0.0,
+            # "k1": 0.0,  # take undistorted images only
+            # "k2": 0.0,
+            # "k3": 0.0,
+            # "k4": 0.0,
+            # "p1": 0.0,
+            # "p2": 0.0,
             "is_fisheye": False,  # TODO: not supporting fish eye camera
-            "cx": cx,
-            "cy": cy,
-            "w": int(w),
-            "h": int(h),
+            # "cx": cx,
+            # "cy": cy,
+            # "w": int(w),
+            # "h": int(h),
             "aabb_scale": np.exp2(np.rint(np.log2(radius))),  # power of two, for INGP resolution computation
             "aabb_range": bounding_box,
             "sphere_center": center,
@@ -1364,10 +1355,21 @@ class ExportSceneParameters(Operator):
             [0, 0, 0, 1]
         ])
 
-        path = bpy.context.scene.my_tool.colmap_path
-
         # read poses
         for img in colmap_data['images'].values():
+            camera = colmap_data['cameras'][img.camera_id]
+            fl_x = camera.params[0]  # NOTE: only supports pinhole camera
+            fl_y = camera.params[1]
+            cx = camera.params[2]
+            cy = camera.params[3]
+            sk_x = 0  # TODO: check if colmap has skew
+            sk_y = 0
+            intrinsic = np.array([
+                [fl_x, sk_x, cx],
+                [sk_y, fl_y, cy],
+                [0, 0, 1]
+            ])
+
             rotation = qvec2rotmat(img.qvec)
             translation = img.tvec.reshape(3, 1)
             w2c = np.concatenate([rotation, translation], 1)
@@ -1375,8 +1377,8 @@ class ExportSceneParameters(Operator):
             c2w = np.linalg.inv(w2c)
             c2w = c2w @ flip_mat  # convert to GL convention used in iNGP
 
-            frame = {"file_path": 'images/' + img.name, "transform_matrix": c2w.tolist()}
-            # print(frame)
+            frame = {"file_path": 'images/' + img.name,
+                     "transform_matrix": c2w.tolist(), "intrinsic_matrix": intrinsic.tolist(), "w": camera.width, "h": camera.height}
             out["frames"].append(frame)
 
         file_path = bpy.path.abspath(bpy.context.scene.my_tool.colmap_path + 'transforms.json')
